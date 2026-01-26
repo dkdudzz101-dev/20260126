@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">제주오름</string>
+
+    <!-- 카카오 API 키 -->
+    <string name="kakao_app_key">d4b730c14857dce93c9ba94e30f56260</string>
+
+    <!-- 카카오 OAuth 스킴 (kakao + 앱키) -->
+    <string name="kakao_oauth_scheme">kakaod4b730c14857dce93c9ba94e30f56260</string>
+</resources>

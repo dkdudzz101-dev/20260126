@@ -1,0 +1,8 @@
+## 릴리즈 서명 설정 (Play Store 출시용)
+## 이 파일을 key.properties로 복사한 후 실제 값을 입력하세요.
+## 주의: key.properties 파일은 절대 Git에 커밋하지 마세요!
+
+storePassword=your_keystore_password
+keyPassword=your_key_password
+keyAlias=upload
+storeFile=../app/upload-keystore.jks

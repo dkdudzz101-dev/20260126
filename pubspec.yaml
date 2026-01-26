@@ -1,0 +1,99 @@
+name: jeju_app
+description: "제주 오름 탐험 앱"
+publish_to: 'none'
+version: 1.0.0+2
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Supabase
+  supabase_flutter: ^2.8.4
+
+  # 상태 관리
+  provider: ^6.1.2
+
+  # 라우팅
+  go_router: ^14.8.1
+
+  # 지도 & 위치
+  kakao_map_plugin: ^0.3.7
+  geolocator: ^13.0.2
+
+  # 소셜 로그인
+  kakao_flutter_sdk: ^1.9.6
+  flutter_naver_login: ^2.1.1
+  sign_in_with_apple: ^6.1.4
+
+  # 이미지
+  cached_network_image: ^3.3.1
+  image_picker: ^1.1.2
+
+  # 저장소
+  flutter_secure_storage: ^9.2.0
+  shared_preferences: ^2.2.3
+  path_provider: ^2.1.2
+  sqflite: ^2.3.3
+
+  # 딥링크
+  app_links: ^6.4.0
+
+  # 유틸리티
+  url_launcher: ^6.2.6
+  share_plus: ^7.2.2
+  permission_handler: ^11.3.1
+  connectivity_plus: ^6.0.3
+  http: ^1.2.1
+  intl: ^0.19.0
+
+  # 걸음수 측정
+  pedometer: ^4.0.2
+
+  # 알림
+  flutter_local_notifications: ^17.2.1
+
+  # 백그라운드 서비스
+  flutter_background_service: ^5.0.5
+  flutter_background_service_android: ^6.2.2
+
+  # UI
+  shimmer: ^3.0.0
+  flutter_svg: ^2.0.17
+  photo_view: ^0.15.0
+  proj4dart: ^3.0.0
+
+  # 화면 캡처 (공유용)
+  screenshot: ^3.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon.png"
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/geojson/
+
+  # fonts:
+  #   - family: Pretendard
+  #     fonts:
+  #       - asset: assets/fonts/Pretendard-Regular.ttf
+  #       - asset: assets/fonts/Pretendard-Bold.ttf
+  #         weight: 700
