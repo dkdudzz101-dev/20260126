@@ -83,6 +83,28 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _handleAppleLogin() async {
+    setState(() => _isLoading = true);
+    try {
+      final authProvider = context.read<AuthProvider>();
+      final success = await authProvider.signInWithApple();
+      if (success && mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const MainTabScreen()),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('로그인 실패: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   void _skipLogin() {
     Navigator.pushReplacement(
       context,
@@ -231,6 +253,15 @@ class _LoginScreenState extends State<LoginScreen> {
                   textColor: const Color(0xFF191919),
                   icon: Icons.chat_bubble,
                   text: '카카오로 시작하기',
+                ),
+                const SizedBox(height: 12),
+                // Apple 로그인
+                _buildSocialLoginButton(
+                  onPressed: _handleAppleLogin,
+                  backgroundColor: Colors.black,
+                  textColor: Colors.white,
+                  icon: Icons.apple,
+                  text: 'Apple로 시작하기',
                 ),
               ],
               const SizedBox(height: 24),
