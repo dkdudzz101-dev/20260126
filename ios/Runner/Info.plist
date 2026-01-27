@@ -57,6 +57,12 @@
 	<!-- 걸음수 측정 권한 설명 -->
 	<key>NSMotionUsageDescription</key>
 	<string>오늘의 걸음수와 이동거리를 측정하기 위해 활동 데이터 권한이 필요합니다.</string>
+
+	<!-- 카메라/사진 권한 설명 -->
+	<key>NSCameraUsageDescription</key>
+	<string>프로필 사진 및 커뮤니티 게시글 사진 촬영을 위해 카메라 권한이 필요합니다.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>프로필 사진 및 커뮤니티 게시글에 사진을 첨부하기 위해 사진 라이브러리 접근 권한이 필요합니다.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
