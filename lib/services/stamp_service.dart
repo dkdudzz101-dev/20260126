@@ -112,7 +112,7 @@ class StampService {
     }
   }
 
-  // 사용자 스탬프 목록 가져오기
+  // 사용자 스탬프 목록 가져오기 (stamps + hiking_logs 통합)
   Future<List<Map<String, dynamic>>> getUserStamps() async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return [];
@@ -121,14 +121,44 @@ class StampService {
     final stamps = await _client
         .from('stamps')
         .select('*')
-        .eq('user_id', userId)
-        .order('completed_at', ascending: false);
+        .eq('user_id', userId);
 
-    final stampList = List<Map<String, dynamic>>.from(stamps);
-    if (stampList.isEmpty) return [];
+    // hiking_logs 가져오기
+    final hikingLogs = await _client
+        .from('hiking_logs')
+        .select('*')
+        .eq('user_id', userId);
+
+    // 통합 리스트 생성
+    final List<Map<String, dynamic>> allRecords = [];
+
+    // stamps 추가 (completed_at 기준)
+    for (final stamp in stamps) {
+      final record = Map<String, dynamic>.from(stamp);
+      record['record_type'] = 'stamp';
+      record['record_date'] = stamp['completed_at'];
+      allRecords.add(record);
+    }
+
+    // hiking_logs 추가 (hiked_at 기준)
+    for (final log in hikingLogs) {
+      final record = Map<String, dynamic>.from(log);
+      record['record_type'] = 'hiking_log';
+      record['record_date'] = log['hiked_at'];
+      allRecords.add(record);
+    }
+
+    if (allRecords.isEmpty) return [];
+
+    // 날짜순 정렬 (최신순)
+    allRecords.sort((a, b) {
+      final dateA = DateTime.tryParse(a['record_date'] ?? '') ?? DateTime(1970);
+      final dateB = DateTime.tryParse(b['record_date'] ?? '') ?? DateTime(1970);
+      return dateB.compareTo(dateA);
+    });
 
     // oreum IDs 추출
-    final oreumIds = stampList
+    final oreumIds = allRecords
         .map((s) => s['oreum_id']?.toString())
         .where((id) => id != null)
         .toSet()
@@ -147,15 +177,15 @@ class StampService {
       }
     }
 
-    // stamps에 oreums 데이터 병합
-    for (final stamp in stampList) {
-      final oreumId = stamp['oreum_id']?.toString();
+    // records에 oreums 데이터 병합
+    for (final record in allRecords) {
+      final oreumId = record['oreum_id']?.toString();
       if (oreumId != null && oreumMap.containsKey(oreumId)) {
-        stamp['oreums'] = oreumMap[oreumId];
+        record['oreums'] = oreumMap[oreumId];
       }
     }
 
-    return stampList;
+    return allRecords;
   }
 
   // 완등 수 가져오기

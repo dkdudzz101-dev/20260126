@@ -84,28 +84,14 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 // 출입 제한 경고 배너
                 if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
                   _buildRestrictionBanner(),
-                _buildStampButton(),
-                _buildInfoSection(),
-                // 카테고리 태그
-                if (oreum.categories.isNotEmpty)
-                  _buildCategoryTags(),
-                const SizedBox(height: 16),
-                // 소개 섹션
-                _buildDescriptionSection(),
-                if (oreum.origin != null && oreum.origin!.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  _buildOriginSection(),
-                ],
-                const Divider(height: 32),
-                // 등산로 섹션
-                _buildTrailInfoSection(),
+                _buildOreumImage(),
+                _buildOreumInfoList(),
+                // 등산로 보기 버튼
+                _buildTrailViewButton(),
                 if (oreum.elevationUrl != null) ...[
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
                   _buildElevationGraphSection(),
                 ],
-                const Divider(height: 32),
-                // 시설 섹션
-                _buildFacilitySectionWithTitle(),
                 const Divider(height: 32),
                 // 블로그 섹션
                 _buildBlogSection(),
@@ -161,6 +147,102 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
           onPressed: () => _shareOreum(),
         ),
       ],
+    );
+  }
+
+  Widget _buildOreumInfoList() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 기본 정보
+          if (oreum.difficulty != null)
+            _buildInfoRowWithIcon(Icons.trending_up, '난이도', oreum.difficulty!, Colors.orange),
+          if (oreum.elevation != null)
+            _buildInfoRowWithIcon(Icons.height, '해발고도', '${oreum.elevation}m', Colors.teal),
+          if (oreum.distance != null)
+            _buildInfoRowWithIcon(Icons.straighten, '거리', '${oreum.distance!.toStringAsFixed(2)}km', Colors.blue),
+          if (oreum.timeUp != null)
+            _buildInfoRowWithIcon(Icons.arrow_upward, '상행시간', '${oreum.timeUp}분', Colors.green),
+          if (oreum.timeDown != null)
+            _buildInfoRowWithIcon(Icons.arrow_downward, '하행시간', '${oreum.timeDown}분', Colors.green),
+          if (oreum.surface != null && oreum.surface!.isNotEmpty)
+            _buildInfoRowWithIcon(Icons.terrain, '노면', oreum.surface!, Colors.brown),
+          if (oreum.address != null && oreum.address!.isNotEmpty)
+            _buildInfoRowWithIcon(Icons.location_on, '주소', oreum.address!, Colors.red),
+          if (oreum.parking != null && oreum.parking!.isNotEmpty)
+            _buildInfoRowWithIcon(Icons.local_parking, '주차', oreum.parking!, Colors.indigo),
+          if (oreum.restroom != null && oreum.restroom!.isNotEmpty)
+            _buildInfoRowWithIcon(Icons.wc, '화장실', oreum.restroom!, Colors.purple),
+          if (oreum.recommendedSeason != null && oreum.recommendedSeason!.isNotEmpty)
+            _buildInfoRowWithIcon(Icons.calendar_month, '추천시기', oreum.recommendedSeason!, Colors.pink),
+          if (oreum.origin != null && oreum.origin!.isNotEmpty)
+            _buildInfoRowWithIcon(Icons.history_edu, '이름유래', oreum.origin!, Colors.blueGrey),
+          if (oreum.features != null && oreum.features!.isNotEmpty)
+            _buildInfoRowWithIcon(Icons.auto_awesome, '특성', oreum.features!, Colors.amber),
+          if (oreum.description != null && oreum.description!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              oreum.description!,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+                height: 1.6,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRowWithIcon(IconData icon, String label, String value, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 60,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrailViewButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: OutlinedButton.icon(
+        onPressed: () => _navigateToMapWithTrail(),
+        icon: const Icon(Icons.map_outlined),
+        label: const Text('등산로 보기'),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
     );
   }
 
@@ -379,6 +461,98 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 fontSize: 14,
                 color: Colors.blue.shade700,
                 height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 오름 특성 섹션
+  Widget _buildFeaturesSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.green.shade50,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.landscape, size: 20, color: Colors.green.shade700),
+                const SizedBox(width: 8),
+                Text(
+                  '오름 특성',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green.shade800,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              oreum.features!,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.green.shade700,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 추천 시기 섹션
+  Widget _buildRecommendedSeasonSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade100,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.calendar_month, size: 24, color: Colors.orange.shade700),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '추천 방문 시기',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.orange.shade600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    oreum.recommendedSeason!,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.orange.shade800,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -698,11 +872,11 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
       oreum.startLng!,
     );
 
-    if (distance <= 200) {
-      // 200m 이내면 바로 등반 시작
+    if (distance <= 100) {
+      // 100m 이내면 바로 등반 시작
       _navigateToHiking();
     } else {
-      // 200m 밖이면 팝업 표시
+      // 100m 밖이면 팝업 표시
       final distanceText = distance < 1000
           ? '${distance.toInt()}m'
           : '${(distance / 1000).toStringAsFixed(1)}km';
@@ -738,30 +912,38 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                   child: const Text('현재 위치에서 시작'),
                 ),
                 const SizedBox(height: 10),
-                OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    mapService.openKakaoMapNavigation(
-                      destLat: oreum.startLat!,
-                      destLng: oreum.startLng!,
-                      destName: '${oreum.name} 입구',
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          mapService.openKakaoMapNavigation(
+                            destLat: oreum.startLat!,
+                            destLng: oreum.startLng!,
+                            destName: '${oreum.name} 입구',
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('네비 실행'),
+                      ),
                     ),
-                  ),
-                  child: const Text('네비 실행'),
-                ),
-                const SizedBox(height: 10),
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text('닫기'),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        child: const Text('닫기'),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -791,6 +973,51 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
       default:
         return AppColors.textSecondary;
     }
+  }
+
+  Widget _buildOreumImage() {
+    // aerialImageUrl 우선, 없으면 imageUrl 사용
+    final displayImageUrl = oreum.aerialImageUrl ?? oreum.imageUrl;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: AspectRatio(
+        aspectRatio: 2 / 1,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: Colors.white,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: displayImageUrl != null
+              ? Image.network(
+                  displayImageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    color: AppColors.surface,
+                    child: const Center(
+                      child: Icon(Icons.terrain, size: 48, color: AppColors.textHint),
+                    ),
+                  ),
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return Container(
+                      color: AppColors.surface,
+                      child: const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                    );
+                  },
+                )
+              : Container(
+                  color: AppColors.surface,
+                  child: const Center(
+                    child: Icon(Icons.terrain, size: 48, color: AppColors.textHint),
+                  ),
+                ),
+        ),
+      ),
+    );
   }
 
   Widget _buildStampButton() {
@@ -844,7 +1071,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                         Text(
                           hasStamp
                               ? '${stampDate?.year}.${stampDate?.month}.${stampDate?.day} 방문'
-                              : '정상 200m 이내에서 GPS 인증',
+                              : '정상 100m 이내에서 GPS 인증',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.8),
                             fontSize: 13,

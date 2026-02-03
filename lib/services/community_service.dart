@@ -9,7 +9,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByPopular({int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image), oreums(name)')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
         .order('like_count', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -20,7 +20,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByLatest({int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image), oreums(name)')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
         .order('created_at', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -34,7 +34,7 @@ class CommunityService {
 
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image), oreums(name)')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
         .eq('user_id', userId)
         .order('created_at', ascending: false);
 
@@ -45,7 +45,7 @@ class CommunityService {
   Future<Map<String, dynamic>?> getPostById(String postId) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image), oreums(name)')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
         .eq('id', postId)
         .single();
 

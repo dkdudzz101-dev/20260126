@@ -57,7 +57,7 @@ class StampModel {
       id: json['id']?.toString() ?? '',
       oreumId: json['oreum_id'] ?? '',
       oreumName: oreum?['name'] ?? json['oreum_id'] ?? '오름',
-      stampedAt: DateTime.tryParse(json['completed_at'] ?? '') ?? DateTime.now(),
+      stampedAt: DateTime.tryParse(json['record_date'] ?? json['completed_at'] ?? json['hiked_at'] ?? '') ?? DateTime.now(),
       lat: (json['lat'] ?? 0.0).toDouble(),
       lng: (json['lng'] ?? 0.0).toDouble(),
       stampUrl: oreum?['stamp_url'],
@@ -163,7 +163,7 @@ class StampProvider extends ChangeNotifier {
     }
   }
 
-  // 스탬프 인증 (정상 200m 이내 확인)
+  // 스탬프 인증 (정상 100m 이내 확인)
   Future<StampResult> verifyAndStamp(OreumModel oreum) async {
     _isLoading = true;
     _error = null;
@@ -209,11 +209,11 @@ class StampProvider extends ChangeNotifier {
         targetLng,
       );
 
-      // 200m 이내인지 확인
-      if (distance > 200) {
+      // 100m 이내인지 확인
+      if (distance > 100) {
         return StampResult(
           success: false,
-          message: '정상에서 ${distance.toInt()}m 떨어져 있습니다.\n200m 이내에서 인증해주세요.',
+          message: '정상에서 ${distance.toInt()}m 떨어져 있습니다.\n100m 이내에서 인증해주세요.',
           distance: distance,
         );
       }

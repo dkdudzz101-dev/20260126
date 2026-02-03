@@ -195,7 +195,7 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
                     ),
                   ),
                   Text(
-                    '정상 200m 이내에서 인증',
+                    '정상 100m 이내에서 인증',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       fontSize: 11,
@@ -872,8 +872,8 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
       return;
     }
 
-    // 200m 이내의 오름 찾기 (정상 좌표 기준)
-    const double maxDistance = 200.0; // 200m 이내
+    // 100m 이내의 오름 찾기 (정상 좌표 기준)
+    const double maxDistance = 100.0; // 100m 이내
 
     // 정상 좌표가 있는 오름만 필터링하고 거리 계산
     final nearbyOreums = <Map<String, dynamic>>[];
@@ -902,7 +902,7 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
 
     if (nearbyOreums.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('200m 이내에 인증 가능한 오름이 없습니다. 오름 정상에서 다시 시도해주세요.')),
+        const SnackBar(content: Text('100m 이내에 인증 가능한 오름이 없습니다. 오름 정상에서 다시 시도해주세요.')),
       );
       return;
     }
@@ -978,7 +978,7 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
               ),
               const SizedBox(height: 8),
               Text(
-                '${nearbyOreums.length}개의 오름이 200m 이내에 있습니다',
+                '${nearbyOreums.length}개의 오름이 100m 이내에 있습니다',
                 style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
               ),
               const SizedBox(height: 16),

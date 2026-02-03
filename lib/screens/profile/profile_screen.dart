@@ -228,20 +228,57 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 24,
-              backgroundColor: AppColors.primary,
-              backgroundImage: profileImage != null ? NetworkImage(profileImage) : null,
-              child: profileImage == null
-                  ? Text(
-                      initial,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.primary,
+              ),
+              child: profileImage != null
+                  ? ClipOval(
+                      child: Image.network(
+                        '$profileImage?t=${DateTime.now().millisecondsSinceEpoch}',
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Center(
+                            child: Text(
+                              initial,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          );
+                        },
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Center(
+                            child: Text(
+                              initial,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     )
-                  : null,
+                  : Center(
+                      child: Text(
+                        initial,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -726,26 +763,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ListTile(
                   leading: const Icon(Icons.gps_fixed),
                   title: const Text('자동 스탬프 인증'),
-                  subtitle: const Text('정상 200m 이내 지나가면 자동 인증'),
-                  trailing: Switch(
-                    value: _isBackgroundServiceRunning,
-                    onChanged: (value) async {
-                      if (value) {
-                        await BackgroundLocationService.startService();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('백그라운드 스탬프 인증이 활성화되었습니다')),
-                        );
-                      } else {
-                        await BackgroundLocationService.stopService();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('백그라운드 스탬프 인증이 비활성화되었습니다')),
-                        );
-                      }
-                      setState(() {
-                        _isBackgroundServiceRunning = value;
-                      });
-                    },
-                    activeColor: AppColors.primary,
+                  subtitle: const Text('등반 시작 시 자동으로 활성화됩니다'),
+                  trailing: Icon(
+                    _isBackgroundServiceRunning ? Icons.check_circle : Icons.radio_button_unchecked,
+                    color: _isBackgroundServiceRunning ? AppColors.primary : AppColors.textHint,
                   ),
                 ),
                 ListTile(
@@ -1258,7 +1279,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               SizedBox(height: 8),
-              Text('오름 정상에서 200m 이내에서 GPS 인증을 하면 스탬프를 획득할 수 있습니다.'),
+              Text('오름 정상에서 100m 이내에서 GPS 인증을 하면 스탬프를 획득할 수 있습니다.'),
               SizedBox(height: 16),
               Text(
                 '레벨 시스템',

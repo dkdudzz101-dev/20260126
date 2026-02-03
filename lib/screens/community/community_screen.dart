@@ -19,7 +19,7 @@ class CommunityScreen extends StatefulWidget {
 }
 
 class _CommunityScreenState extends State<CommunityScreen> {
-  String _selectedFilter = '인기';
+  String _selectedFilter = '최신';
   String _selectedCategory = '전체';
   String? _selectedOreumId; // ignore: unused_field
   String? _selectedOreumName;
@@ -329,24 +329,59 @@ class _CommunityScreenState extends State<CommunityScreen> {
               // 프로필 헤더
               Row(
                 children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: AppColors.surface,
-                    backgroundImage: post.userProfileImage != null
-                        ? NetworkImage(post.userProfileImage!)
-                        : null,
-                    child: post.userProfileImage == null
-                        ? const Icon(Icons.person, color: AppColors.textSecondary)
-                        : null,
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.surface,
+                    ),
+                    child: post.userProfileImage != null
+                        ? ClipOval(
+                            child: Image.network(
+                              post.userProfileImage!,
+                              width: 40,
+                              height: 40,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Center(
+                                  child: Icon(Icons.person, color: AppColors.textSecondary),
+                                );
+                              },
+                            ),
+                          )
+                        : const Center(
+                            child: Icon(Icons.person, color: AppColors.textSecondary),
+                          ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          post.userNickname ?? '익명',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        Row(
+                          children: [
+                            Text(
+                              post.userNickname ?? '익명',
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'Lv.${post.userLevel}',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         Text(
                           post.timeAgo,
@@ -562,21 +597,27 @@ class WritePostSheet extends StatefulWidget {
 
 class _WritePostSheetState extends State<WritePostSheet> {
   final _contentController = TextEditingController();
+  final _timeController = TextEditingController();
   final _communityService = CommunityService();
   final _imagePicker = ImagePicker();
 
   String? _selectedOreumId;
   String? _selectedOreumName;
   String _selectedCategory = '후기';
+  String? _selectedDifficulty;
   final List<File> _selectedImages = [];
   bool _isUploading = false;
 
   // 카테고리 목록 (전체 제외)
   static const List<String> _categories = ['등반완료', '후기', '질문', '동행모집'];
 
+  // 난이도 목록
+  static const List<String> _difficulties = ['쉬움', '보통', '어려움'];
+
   @override
   void dispose() {
     _contentController.dispose();
+    _timeController.dispose();
     super.dispose();
   }
 
@@ -629,8 +670,25 @@ class _WritePostSheetState extends State<WritePostSheet> {
         }
       }
 
+      // 내용 구성 (난이도, 시간 정보 포함)
+      String content = _contentController.text.trim();
+
+      // 등반완료/후기 카테고리일 때 난이도, 시간 정보 추가
+      if (_selectedCategory == '등반완료' || _selectedCategory == '후기') {
+        final List<String> tags = [];
+        if (_selectedDifficulty != null) {
+          tags.add('난이도: $_selectedDifficulty');
+        }
+        if (_timeController.text.isNotEmpty) {
+          tags.add('소요시간: ${_timeController.text}분');
+        }
+        if (tags.isNotEmpty) {
+          content = '[${tags.join(' | ')}]\n\n$content';
+        }
+      }
+
       widget.onSubmit(
-        _contentController.text.trim(),
+        content,
         _selectedOreumId,
         _selectedOreumName,
         _selectedCategory,
@@ -726,15 +784,17 @@ class _WritePostSheetState extends State<WritePostSheet> {
                     children: [
                       Icon(Icons.terrain, color: AppColors.primary, size: 20),
                       const SizedBox(width: 8),
-                      Text(
-                        _selectedOreumName ?? '오름 태그 (선택)',
-                        style: TextStyle(
-                          color: _selectedOreumName != null
-                              ? AppColors.textPrimary
-                              : AppColors.textHint,
+                      Expanded(
+                        child: Text(
+                          _selectedOreumName ?? '오름 태그 (선택)',
+                          style: TextStyle(
+                            color: _selectedOreumName != null
+                                ? AppColors.textPrimary
+                                : AppColors.textHint,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      const Spacer(),
                       if (_selectedOreumName != null)
                         GestureDetector(
                           onTap: () {
@@ -752,6 +812,77 @@ class _WritePostSheetState extends State<WritePostSheet> {
                 ),
               ),
               const SizedBox(height: 16),
+
+              // 난이도 & 소요시간 (등반완료, 후기 카테고리일 때만)
+              if (_selectedCategory == '등반완료' || _selectedCategory == '후기') ...[
+                Row(
+                  children: [
+                    // 난이도 선택
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '난이도',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: AppColors.border),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _selectedDifficulty,
+                                hint: const Text('선택'),
+                                isExpanded: true,
+                                items: _difficulties.map((d) => DropdownMenuItem(
+                                  value: d,
+                                  child: Text(d),
+                                )).toList(),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _selectedDifficulty = value;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // 소요시간 입력
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '소요시간',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _timeController,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              hintText: '분 단위',
+                              suffixText: '분',
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
 
               // 내용 입력
               TextField(
@@ -881,58 +1012,157 @@ class _WritePostSheetState extends State<WritePostSheet> {
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return Container(
-          height: 400,
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '오름 선택',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: oreums.length,
-                  itemBuilder: (context, index) {
-                    final oreum = oreums[index];
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: AppColors.surface,
-                        child: const Icon(Icons.terrain, color: AppColors.primary),
-                      ),
-                      title: Text(oreum.name),
-                      subtitle: oreum.difficulty != null
-                          ? Text(oreum.difficulty!)
-                          : null,
-                      onTap: () {
-                        setState(() {
-                          _selectedOreumId = oreum.id;
-                          _selectedOreumName = oreum.name;
-                        });
-                        Navigator.pop(context);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
+        return _OreumSearchSheet(
+          oreums: oreums,
+          onSelect: (oreum) {
+            setState(() {
+              _selectedOreumId = oreum.id;
+              _selectedOreumName = oreum.name;
+            });
+            Navigator.pop(context);
+          },
         );
       },
+    );
+  }
+}
+
+// 오름 검색 시트
+class _OreumSearchSheet extends StatefulWidget {
+  final List<dynamic> oreums;
+  final Function(dynamic oreum) onSelect;
+
+  const _OreumSearchSheet({
+    required this.oreums,
+    required this.onSelect,
+  });
+
+  @override
+  State<_OreumSearchSheet> createState() => _OreumSearchSheetState();
+}
+
+class _OreumSearchSheetState extends State<_OreumSearchSheet> {
+  final _searchController = TextEditingController();
+  List<dynamic> _filteredOreums = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _filteredOreums = widget.oreums;
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String query) {
+    setState(() {
+      if (query.isEmpty) {
+        _filteredOreums = widget.oreums;
+      } else {
+        _filteredOreums = widget.oreums
+            .where((oreum) => oreum.name.toLowerCase().contains(query.toLowerCase()))
+            .toList();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            '오름 선택',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          // 검색창
+          TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              hintText: '오름 이름 검색...',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _searchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchController.clear();
+                        _onSearchChanged('');
+                      },
+                    )
+                  : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            ),
+            onChanged: _onSearchChanged,
+          ),
+          const SizedBox(height: 12),
+          // 검색 결과 수
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${_filteredOreums.length}개의 오름',
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // 오름 목록
+          Expanded(
+            child: _filteredOreums.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.search_off, size: 48, color: AppColors.textHint),
+                        const SizedBox(height: 8),
+                        const Text(
+                          '검색 결과가 없습니다',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _filteredOreums.length,
+                    itemBuilder: (context, index) {
+                      final oreum = _filteredOreums[index];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: AppColors.surface,
+                          child: const Icon(Icons.terrain, color: AppColors.primary),
+                        ),
+                        title: Text(oreum.name),
+                        subtitle: oreum.difficulty != null
+                            ? Text(oreum.difficulty!)
+                            : null,
+                        onTap: () => widget.onSelect(oreum),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1013,21 +1243,61 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   // 작성자 정보
                   Row(
                     children: [
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundColor: AppColors.surface,
-                        child: const Icon(Icons.person, color: AppColors.textSecondary),
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.surface,
+                        ),
+                        child: widget.post.userProfileImage != null
+                            ? ClipOval(
+                                child: Image.network(
+                                  widget.post.userProfileImage!,
+                                  width: 48,
+                                  height: 48,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return const Center(
+                                      child: Icon(Icons.person, color: AppColors.textSecondary),
+                                    );
+                                  },
+                                ),
+                              )
+                            : const Center(
+                                child: Icon(Icons.person, color: AppColors.textSecondary),
+                              ),
                       ),
                       const SizedBox(width: 12),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            widget.post.userNickname ?? '익명',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 16,
-                            ),
+                          Row(
+                            children: [
+                              Text(
+                                widget.post.userNickname ?? '익명',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  'Lv.${widget.post.userLevel}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.primary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           Text(
                             widget.post.timeAgo,

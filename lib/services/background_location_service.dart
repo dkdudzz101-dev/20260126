@@ -156,8 +156,8 @@ class BackgroundLocationService {
             summitLng,
           );
 
-          // 200m 이내면 자동 스탬프
-          if (distance <= 200) {
+          // 100m 이내면 자동 스탬프
+          if (distance <= 100) {
             await recordStamp(oreumId, name);
           }
         }

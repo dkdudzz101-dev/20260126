@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/kakao_config.dart';
@@ -54,10 +55,35 @@ class MapService {
   }) {
     _positionSubscription?.cancel();
 
-    const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 5,
-    );
+    late LocationSettings locationSettings;
+
+    if (Platform.isAndroid) {
+      locationSettings = AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+        forceLocationManager: false,
+        intervalDuration: const Duration(seconds: 3),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationText: "등산 경로를 기록하고 있습니다",
+          notificationTitle: "제주오름",
+          enableWakeLock: true,
+        ),
+      );
+    } else if (Platform.isIOS) {
+      locationSettings = AppleSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+        activityType: ActivityType.fitness,
+        pauseLocationUpdatesAutomatically: false,
+        showBackgroundLocationIndicator: true,
+        allowBackgroundLocationUpdates: true,
+      );
+    } else {
+      locationSettings = const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      );
+    }
 
     _positionSubscription = Geolocator.getPositionStream(
       locationSettings: locationSettings,
@@ -83,12 +109,12 @@ class MapService {
     return Geolocator.distanceBetween(lat1, lng1, lat2, lng2);
   }
 
-  // 정상 도착 확인 (200m 이내)
+  // 정상 도착 확인 (100m 이내)
   bool isAtSummit(
     Position currentPosition,
     double summitLat,
     double summitLng, {
-    double threshold = 200,
+    double threshold = 100,
   }) {
     final distance = calculateDistance(
       currentPosition.latitude,

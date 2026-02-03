@@ -14,8 +14,10 @@ import '../../services/pedometer_service.dart';
 import '../../services/trail_service.dart';
 import '../../services/hiking_route_service.dart';
 import '../../services/share_service.dart';
+import '../../services/background_location_service.dart';
 import '../../utils/calorie_calculator.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/stamp_provider.dart';
 import '../../widgets/hiking_share_card.dart';
 
 class HikingScreen extends StatefulWidget {
@@ -37,6 +39,10 @@ class _HikingScreenState extends State<HikingScreen> {
 
   // 현재 위치 커스텀 오버레이
   Set<CustomOverlay> _userLocationOverlay = {};
+
+  // 정상 인증 범위 원 (100m 반경)
+  Set<Circle> _summitRangeCircle = {};
+  Set<CustomOverlay> _summitRangeLabel = {};
 
   // 등반 상태
   bool _isHiking = false;
@@ -222,6 +228,10 @@ class _HikingScreenState extends State<HikingScreen> {
     _timer?.cancel();
     _mapService.stopTracking();
     _mapService.dispose();
+    // 등반 중이었다면 백그라운드 서비스도 종료
+    if (_isHiking) {
+      BackgroundLocationService.stopService();
+    }
     super.dispose();
   }
 
@@ -264,24 +274,51 @@ class _HikingScreenState extends State<HikingScreen> {
         latLng: LatLng(widget.oreum.summitLat!, widget.oreum.summitLng!),
         infoWindowContent: '정상',
       ));
-    }
 
-    // 현재 위치 커스텀 오버레이
-    if (_currentPosition != null) {
-      _userLocationOverlay = {
-        CustomOverlay(
-          customOverlayId: 'user_location',
-          latLng: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          content: '<div style="width:30px;height:42px;position:relative;"><div style="width:30px;height:30px;background:linear-gradient(135deg,#ff6b6b,#e53935);border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 3px 8px rgba(0,0,0,0.4);"></div><div style="position:absolute;top:8px;left:8px;width:14px;height:14px;background:white;border-radius:50%;"></div></div>',
-          xAnchor: 0.5,
-          yAnchor: 0.5,
-          zIndex: 100,
-        ),
-      };
+      // 정상 인증 범위 원 (100m) - 등반 시작 전/중에만 표시
+      if (!_isCompleted) {
+        _summitRangeCircle = {
+          Circle(
+            circleId: 'summit_range_${widget.oreum.id}',
+            center: LatLng(widget.oreum.summitLat!, widget.oreum.summitLng!),
+            radius: 100,
+            strokeWidth: 3,
+            strokeColor: Colors.green,
+            strokeOpacity: 0.8,
+            strokeStyle: StrokeStyle.dash,
+            fillColor: Colors.green,
+            fillOpacity: 0.15,
+          ),
+        };
+        _summitRangeLabel = {
+          CustomOverlay(
+            customOverlayId: 'summit_label_${widget.oreum.id}',
+            latLng: LatLng(widget.oreum.summitLat!, widget.oreum.summitLng!),
+            content: '<div style="background:white;padding:4px 8px;border-radius:12px;border:2px solid #4CAF50;box-shadow:0 2px 4px rgba(0,0,0,0.2);"><span style="font-size:11px;color:#2E7D32;font-weight:bold;">정상인증 가능영역</span></div>',
+            xAnchor: 0.5,
+            yAnchor: 0.5,
+            zIndex: 10,
+          ),
+        };
+      }
     }
 
     setState(() {
       _markers = markers;
+
+      // 현재 위치 커스텀 오버레이
+      if (_currentPosition != null) {
+        _userLocationOverlay = {
+          CustomOverlay(
+            customOverlayId: 'user_location_${DateTime.now().millisecondsSinceEpoch}',
+            latLng: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            content: '<div style="width:30px;height:42px;position:relative;"><div style="width:30px;height:30px;background:linear-gradient(135deg,#ff6b6b,#e53935);border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 3px 8px rgba(0,0,0,0.4);"></div><div style="position:absolute;top:8px;left:8px;width:14px;height:14px;background:white;border-radius:50%;"></div></div>',
+            xAnchor: 0.5,
+            yAnchor: 1.0,
+            zIndex: 100,
+          ),
+        };
+      }
     });
   }
 
@@ -348,14 +385,14 @@ class _HikingScreenState extends State<HikingScreen> {
         Polyline(
           polylineId: 'track',
           points: points,
-          strokeColor: AppColors.primary,
-          strokeWidth: 4,
+          strokeColor: Colors.blue,
+          strokeWidth: 5,
         ),
       };
     });
   }
 
-  void _startHiking() {
+  void _startHiking() async {
     // 시작 걸음수 기록
     final pedometer = context.read<PedometerService>();
     _startSteps = pedometer.todaySteps;
@@ -379,6 +416,9 @@ class _HikingScreenState extends State<HikingScreen> {
 
     // 시설물 마커 상태 유지 (선택된 마커 색상 유지)
     _buildFacilityMarkers();
+
+    // 백그라운드 위치 서비스 시작 (자동 스탬프 인증용)
+    await BackgroundLocationService.startService();
 
     // 타이머 시작 (걸음수도 함께 업데이트)
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -466,7 +506,7 @@ class _HikingScreenState extends State<HikingScreen> {
   void _checkSummitArrival(Position position) {
     if (widget.oreum.summitLat == null || widget.oreum.summitLng == null) return;
 
-    // 200m 이내면 정상 도착으로 인정
+    // 100m 이내면 정상 도착으로 인정
     final distanceToSummit = Geolocator.distanceBetween(
       position.latitude,
       position.longitude,
@@ -474,7 +514,7 @@ class _HikingScreenState extends State<HikingScreen> {
       widget.oreum.summitLng!,
     );
 
-    if (distanceToSummit <= 200 && !_reachedSummit) {
+    if (distanceToSummit <= 100 && !_reachedSummit) {
       setState(() {
         _reachedSummit = true;
       });
@@ -534,6 +574,9 @@ class _HikingScreenState extends State<HikingScreen> {
     _timer?.cancel();
     _mapService.stopTracking();
 
+    // 백그라운드 위치 서비스 종료
+    await BackgroundLocationService.stopService();
+
     setState(() {
       _isHiking = false;
       _isCompleted = true;
@@ -571,7 +614,7 @@ class _HikingScreenState extends State<HikingScreen> {
       }
     }
 
-    // 정상 200m 이내를 지나지 않았으면 스탬프 저장 안함
+    // 정상 100m 이내를 지나지 않았으면 스탬프 저장 안함
     if (!_reachedSummit) {
       // 등반 기록만 저장 (hiking_logs 테이블)
       try {
@@ -676,8 +719,6 @@ class _HikingScreenState extends State<HikingScreen> {
               const SizedBox(height: 16),
               _buildStatRow('이동 거리', '${(_totalDistance / 1000).toStringAsFixed(2)} km'),
               _buildStatRow('소요 시간', _formatDuration(_elapsedSeconds)),
-              if (_calculatedCalories > 0)
-                _buildStatRow('소모 칼로리', '$_calculatedCalories kcal'),
             ],
           ),
         ),
@@ -724,12 +765,6 @@ class _HikingScreenState extends State<HikingScreen> {
               _buildStatRow('평균 속도', _elapsedSeconds > 0
                   ? '${((_totalDistance / 1000) / (_elapsedSeconds / 3600)).toStringAsFixed(1)} km/h'
                   : '0.0 km/h'),
-              const Divider(height: 24),
-              _buildStatRow('칼로리', '$_calculatedCalories kcal'),
-              _buildStatRow('상승 고도', '${_elevationGain.toStringAsFixed(0)} m'),
-              _buildStatRow('하강 고도', '${_elevationLoss.toStringAsFixed(0)} m'),
-              if (_maxAltitude > 0)
-                _buildStatRow('최고 고도', '${_maxAltitude.toStringAsFixed(0)} m'),
               const SizedBox(height: 8),
               const Text(
                 '스탬프가 저장되었습니다!',
@@ -1241,8 +1276,6 @@ class _HikingScreenState extends State<HikingScreen> {
       distanceKm: _totalDistance / 1000,
       durationMinutes: _elapsedSeconds ~/ 60,
       steps: _hikingSteps,
-      calories: _calculatedCalories,
-      elevationGain: _elevationGain,
     );
 
     try {
@@ -1277,21 +1310,18 @@ class _HikingScreenState extends State<HikingScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('등반 중단'),
-        content: const Text('등반을 중단하시겠습니까?\n기록이 저장되지 않습니다.'),
+        content: const Text('등반을 중단하시겠습니까?\n현재까지의 기록이 저장됩니다.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('취소'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () {
-              _timer?.cancel();
-              _mapService.stopTracking();
               Navigator.pop(context);
-              Navigator.pop(context);
+              _completeHiking(); // 기록 저장 후 종료
             },
-            child: const Text('중단'),
+            child: const Text('중단 및 저장'),
           ),
         ],
       ),
@@ -1357,7 +1387,8 @@ class _HikingScreenState extends State<HikingScreen> {
                       : LatLng(33.3617, 126.5292)),
               currentLevel: 3,
               markers: [..._markers, ..._facilityMarkers].toList(),
-              customOverlays: _userLocationOverlay.toList(),
+              customOverlays: [..._summitRangeLabel, ..._userLocationOverlay].toList(),
+              circles: _summitRangeCircle.toList(),
               polylines: [..._trailPolylines, ..._trackPolyline].toList(), // 등산로 + 추적경로
               onMarkerTap: _onMarkerTap,
             ),
@@ -1471,23 +1502,16 @@ class _HikingScreenState extends State<HikingScreen> {
                       '이동 거리',
                     ),
                     _buildStatItem(
-                      Icons.terrain,
-                      _currentAltitude > 0
-                          ? '${_currentAltitude.toStringAsFixed(0)}m'
-                          : '-',
-                      '현재 고도',
-                    ),
-                    _buildStatItem(
-                      Icons.trending_up,
-                      '${_elevationGain.toStringAsFixed(0)}m',
-                      '상승',
-                    ),
-                    _buildStatItem(
                       Icons.flag,
                       _distanceToSummit > 1000
                           ? '${(_distanceToSummit / 1000).toStringAsFixed(1)}km'
                           : '${_distanceToSummit.toInt()}m',
-                      '정상까지',
+                      '남은 거리',
+                    ),
+                    _buildStatItem(
+                      Icons.schedule,
+                      _getEstimatedRemainingTime(),
+                      '남은 시간',
                     ),
                   ],
                 ),
@@ -1520,6 +1544,33 @@ class _HikingScreenState extends State<HikingScreen> {
         ),
       ],
     );
+  }
+
+  // 예상 남은 시간 계산
+  String _getEstimatedRemainingTime() {
+    // 충분한 데이터가 있으면 실제 속도 기반 계산
+    if (_totalDistance > 100 && _elapsedSeconds > 60) {
+      // 평균 속도 (m/s)
+      final avgSpeed = _totalDistance / _elapsedSeconds;
+      if (avgSpeed > 0) {
+        final remainingSeconds = (_distanceToSummit / avgSpeed).round();
+        return _formatDuration(remainingSeconds);
+      }
+    }
+
+    // 데이터 부족 시 오름 기본 소요시간 사용
+    final defaultTimeUp = widget.oreum.timeUp;
+    if (defaultTimeUp != null && defaultTimeUp > 0) {
+      // 진행률에 따라 남은 시간 추정
+      final totalExpectedDistance = widget.oreum.distance?.toDouble() ?? 1000;
+      final progress = _totalDistance / totalExpectedDistance;
+      final remainingMinutes = (defaultTimeUp * (1 - progress)).round();
+      if (remainingMinutes > 0) {
+        return '약 ${remainingMinutes}분';
+      }
+    }
+
+    return '-';
   }
 
   // 카메라 버튼
@@ -1784,36 +1835,98 @@ class _HikingScreenState extends State<HikingScreen> {
   }
 
   Widget _buildHikingControls() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        // 일시정지/재개 버튼
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: _isPaused ? _resumeHiking : _pauseHiking,
-            icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause),
-            label: Text(_isPaused ? '재개' : '일시정지'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _isPaused ? AppColors.primary : Colors.orange,
-              padding: const EdgeInsets.symmetric(vertical: 14),
+        // 스탬프 인증 버튼
+        _buildStampVerifyButton(),
+        const SizedBox(height: 12),
+        // 일시정지/완료 버튼
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            // 일시정지/재개 버튼
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isPaused ? _resumeHiking : _pauseHiking,
+                icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause),
+                label: Text(_isPaused ? '재개' : '일시정지'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isPaused ? AppColors.primary : Colors.orange,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        // 완료 버튼
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: _completeHiking,
-            icon: const Icon(Icons.flag),
-            label: const Text('완료'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.secondary,
-              padding: const EdgeInsets.symmetric(vertical: 14),
+            const SizedBox(width: 12),
+            // 완료 버튼
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _completeHiking,
+                icon: const Icon(Icons.flag),
+                label: const Text('완료'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.secondary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ],
     );
+  }
+
+  Widget _buildStampVerifyButton() {
+    final hasStamp = context.watch<StampProvider>().hasStamp(widget.oreum.id);
+
+    return GestureDetector(
+      onTap: hasStamp ? null : _verifyStamp,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: hasStamp
+                ? [const Color(0xFF4CAF50), const Color(0xFF66BB6A)]
+                : [AppColors.primary, AppColors.primary.withOpacity(0.8)],
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              hasStamp ? Icons.verified : Icons.verified_outlined,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              hasStamp ? '스탬프 획득 완료!' : '스탬프 인증하기',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _verifyStamp() async {
+    final stampProvider = context.read<StampProvider>();
+    final result = await stampProvider.verifyAndStamp(widget.oreum);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.success ? '🎉 스탬프 인증 성공!' : result.message),
+          backgroundColor: result.success ? Colors.green : null,
+        ),
+      );
+    }
   }
 
   // 시설물 목록 패널
@@ -1823,7 +1936,7 @@ class _HikingScreenState extends State<HikingScreen> {
 
     return Positioned(
       left: 12,
-      top: MediaQuery.of(context).padding.top + 80,
+      top: MediaQuery.of(context).padding.top + (_isHiking ? 160 : 80),
       child: Container(
         constraints: const BoxConstraints(maxHeight: 250),
         decoration: BoxDecoration(

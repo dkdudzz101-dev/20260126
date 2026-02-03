@@ -94,8 +94,6 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
                       distanceKm: (stamp.distanceWalked ?? 0) / 1000,
                       durationMinutes: stamp.timeTaken ?? 0,
                       steps: stamp.steps ?? 0,
-                      calories: stamp.calories ?? 0,
-                      elevationGain: stamp.elevationGain ?? 0,
                     );
                     await _shareService.shareWidget(
                       widget: shareCard,
@@ -130,8 +128,7 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
                       oreumName: stamp.oreumName,
                       distanceKm: (stamp.distanceWalked ?? 0) / 1000,
                       durationMinutes: stamp.timeTaken ?? 0,
-                      calories: stamp.calories ?? 0,
-                      elevationGain: stamp.elevationGain ?? 0,
+                      steps: stamp.steps,
                     );
                   } catch (e) {
                     if (mounted) {
@@ -257,39 +254,9 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
             children: [
               Expanded(child: _buildMainStatCard('걸음수', _formatSteps(stamp.steps), Icons.directions_walk)),
               const SizedBox(width: 12),
-              Expanded(child: _buildMainStatCard('칼로리', '${stamp.calories ?? 0} kcal', Icons.local_fire_department)),
+              Expanded(child: _buildMainStatCard('평균 속도', stamp.avgSpeed != null ? '${stamp.avgSpeed!.toStringAsFixed(1)} km/h' : '-', Icons.speed)),
             ],
           ),
-          const SizedBox(height: 16),
-
-          // 고도 정보
-          if (stamp.elevationGain != null || stamp.maxAltitude != null)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '고도 정보',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _buildAltitudeItem('상승', '${(stamp.elevationGain ?? 0).toStringAsFixed(0)}m', Icons.trending_up, Colors.green),
-                      _buildAltitudeItem('하강', '${(stamp.elevationLoss ?? 0).toStringAsFixed(0)}m', Icons.trending_down, Colors.red),
-                      _buildAltitudeItem('최고', '${(stamp.maxAltitude ?? 0).toStringAsFixed(0)}m', Icons.terrain, AppColors.primary),
-                    ],
-                  ),
-                ],
-              ),
-            ),
 
           // 등반 사진
           if (_photoUrls != null && _photoUrls!.isNotEmpty) ...[
@@ -429,30 +396,6 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildAltitudeItem(String label, String value, IconData icon, Color color) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 24),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            color: AppColors.textSecondary,
-          ),
-        ),
-      ],
     );
   }
 

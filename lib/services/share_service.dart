@@ -54,18 +54,16 @@ class ShareService {
     required String oreumName,
     required double distanceKm,
     required int durationMinutes,
-    required int calories,
-    required double elevationGain,
+    int? steps,
   }) async {
+    final stepsText = steps != null ? '\n걸음수: $steps 보' : '';
     final text = '''
 제주오름 등반 기록
 
 $oreumName 등반 완료!
 
 거리: ${distanceKm.toStringAsFixed(2)} km
-시간: ${_formatDuration(durationMinutes)}
-칼로리: $calories kcal
-상승 고도: ${elevationGain.toStringAsFixed(0)} m
+시간: ${_formatDuration(durationMinutes)}$stepsText
 
 #제주오름 #등산 #오름탐험
 ''';

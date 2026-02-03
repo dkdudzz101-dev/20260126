@@ -26,7 +26,7 @@ class CommunityProvider extends ChangeNotifier {
   static const List<String> categories = ['전체', '등반완료', '후기', '질문', '동행모집'];
 
   // 게시글 목록 로드 (Supabase)
-  Future<void> loadPosts({String filter = '인기'}) async {
+  Future<void> loadPosts({String filter = '최신'}) async {
     _isLoading = true;
     _currentFilter = filter;
     _error = null;

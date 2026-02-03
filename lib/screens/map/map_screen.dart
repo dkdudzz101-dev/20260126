@@ -50,6 +50,10 @@ class _MapScreenState extends State<MapScreen> {
   LatLng? _currentLocation;
   Set<CustomOverlay> _userLocationOverlay = {};
 
+  // 정상 인증 범위 원 (100m 반경)
+  Set<Circle> _summitRangeCircle = {};
+  Set<CustomOverlay> _summitRangeLabel = {};
+
   @override
   void initState() {
     super.initState();
@@ -471,11 +475,11 @@ class _MapScreenState extends State<MapScreen> {
       oreum.startLng!,
     );
 
-    if (distance <= 200) {
-      // 200m 이내면 바로 등반 시작
+    if (distance <= 100) {
+      // 100m 이내면 바로 등반 시작
       _navigateToHiking(oreum);
     } else {
-      // 200m 밖이면 팝업 표시
+      // 100m 밖이면 팝업 표시
       final distanceText = distance < 1000
           ? '${distance.toInt()}m'
           : '${(distance / 1000).toStringAsFixed(1)}km';
@@ -511,30 +515,38 @@ class _MapScreenState extends State<MapScreen> {
                   child: const Text('현재 위치에서 시작'),
                 ),
                 const SizedBox(height: 10),
-                OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _mapService.openKakaoMapNavigation(
-                      destLat: oreum.startLat!,
-                      destLng: oreum.startLng!,
-                      destName: '${oreum.name} 입구',
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _mapService.openKakaoMapNavigation(
+                            destLat: oreum.startLat!,
+                            destLng: oreum.startLng!,
+                            destName: '${oreum.name} 입구',
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('네비 실행'),
+                      ),
                     ),
-                  ),
-                  child: const Text('네비 실행'),
-                ),
-                const SizedBox(height: 10),
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text('닫기'),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        child: const Text('닫기'),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -569,6 +581,8 @@ class _MapScreenState extends State<MapScreen> {
         _facilityMarkers = {};
         _selectedFacility = null;
         _currentFacilities = [];
+        _summitRangeCircle = {};
+        _summitRangeLabel = {};
       });
     } else {
       // 등산로 로드 및 표시
@@ -658,6 +672,33 @@ class _MapScreenState extends State<MapScreen> {
               strokeWidth: 4,
             ),
           );
+        }
+
+        // 정상 인증 범위 원 생성 (100m 반경)
+        if (oreum.summitLat != null && oreum.summitLng != null) {
+          _summitRangeCircle = {
+            Circle(
+              circleId: 'summit_range_${oreum.id}',
+              center: LatLng(oreum.summitLat!, oreum.summitLng!),
+              radius: 100,
+              strokeWidth: 3,
+              strokeColor: Colors.green,
+              strokeOpacity: 0.8,
+              strokeStyle: StrokeStyle.dash,
+              fillColor: Colors.green,
+              fillOpacity: 0.15,
+            ),
+          };
+          _summitRangeLabel = {
+            CustomOverlay(
+              customOverlayId: 'summit_label_${oreum.id}',
+              latLng: LatLng(oreum.summitLat!, oreum.summitLng!),
+              content: '<div style="background:white;padding:4px 8px;border-radius:12px;border:2px solid #4CAF50;box-shadow:0 2px 4px rgba(0,0,0,0.2);"><span style="font-size:11px;color:#2E7D32;font-weight:bold;">정상인증 가능영역</span></div>',
+              xAnchor: 0.5,
+              yAnchor: 0.5,
+              zIndex: 10,
+            ),
+          };
         }
 
         setState(() {
@@ -983,7 +1024,8 @@ class _MapScreenState extends State<MapScreen> {
               center: _jejuCenter,
               currentLevel: 9,
               markers: _facilityMarkers.toList(),
-              customOverlays: _userLocationOverlay.toList(),
+              customOverlays: [..._summitRangeLabel, ..._userLocationOverlay].toList(),
+              circles: _summitRangeCircle.toList(),
               clusterer: _oreumClusterer,
               polylines: _trailPolylines.toList(),
               onMarkerTap: _onMarkerTap,
@@ -1346,17 +1388,32 @@ class _MapScreenState extends State<MapScreen> {
                 height: 80,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
-                  color: AppColors.surface,
-                  image: oreum.stampUrl != null
-                      ? DecorationImage(
-                          image: NetworkImage(oreum.stampUrl!),
-                          fit: BoxFit.cover,
-                        )
-                      : null,
+                  color: Colors.white,
                 ),
-                child: oreum.stampUrl == null
-                    ? const Icon(Icons.terrain, color: AppColors.textHint)
-                    : null,
+                clipBehavior: Clip.antiAlias,
+                child: oreum.stampUrl != null
+                    ? Image.network(
+                        oreum.stampUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => Container(
+                          color: Colors.white,
+                          child: const Icon(Icons.terrain, color: AppColors.textHint),
+                        ),
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Container(
+                            color: Colors.white,
+                            child: const Center(
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
+                          );
+                        },
+                      )
+                    : const Icon(Icons.terrain, color: AppColors.textHint),
               ),
               const SizedBox(width: 16),
               // 정보
@@ -1396,10 +1453,10 @@ class _MapScreenState extends State<MapScreen> {
                         ),
                       ],
                     ),
-                    if (oreum.description != null) ...[
+                    if (oreum.origin != null) ...[
                       const SizedBox(height: 4),
                       Text(
-                        oreum.description!,
+                        oreum.origin!,
                         style: const TextStyle(
                           fontSize: 12,
                           color: AppColors.textSecondary,
@@ -1428,6 +1485,13 @@ class _MapScreenState extends State<MapScreen> {
                 _buildInfoChip(
                   Icons.straighten,
                   '${oreum.distance!.toStringAsFixed(2)}km',
+                ),
+              ],
+              if (oreum.elevation != null) ...[
+                const SizedBox(width: 12),
+                _buildInfoChip(
+                  Icons.height,
+                  '${oreum.elevation}m',
                 ),
               ],
             ],

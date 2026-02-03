@@ -50,7 +50,7 @@ class BlogService {
   /// 오름 관련 블로그 검색
   Future<List<BlogPost>> searchBlogPosts(String oreumName, {int display = 5}) async {
     try {
-      final query = Uri.encodeComponent('$oreumName 오름 등산 후기');
+      final query = Uri.encodeComponent('"$oreumName" 등산 후기');
       final url = '$_baseUrl?query=$query&display=$display&sort=sim';
 
       final response = await http.get(

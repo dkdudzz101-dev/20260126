@@ -12,6 +12,7 @@ class PostModel {
   final DateTime? updatedAt;
   final String? userNickname;
   final String? userProfileImage;
+  final int? userStampCount;
 
   PostModel({
     required this.id,
@@ -27,9 +28,25 @@ class PostModel {
     this.updatedAt,
     this.userNickname,
     this.userProfileImage,
+    this.userStampCount,
   });
 
+  int get userLevel => ((userStampCount ?? 0) ~/ 10) + 1;
+
   factory PostModel.fromJson(Map<String, dynamic> json) {
+    // stamp_count 계산: stamps 배열의 길이 또는 직접 제공된 값
+    int? stampCount;
+    if (json['users']?['stamps'] != null) {
+      final stamps = json['users']['stamps'];
+      if (stamps is List) {
+        stampCount = stamps.length;
+      } else if (stamps is int) {
+        stampCount = stamps;
+      }
+    } else if (json['users']?['stamp_count'] != null) {
+      stampCount = json['users']['stamp_count'];
+    }
+
     return PostModel(
       id: json['id']?.toString() ?? '',
       userId: json['user_id']?.toString() ?? '',
@@ -50,6 +67,7 @@ class PostModel {
           : null,
       userNickname: json['users']?['nickname'],
       userProfileImage: json['users']?['profile_image'],
+      userStampCount: stampCount,
     );
   }
 
@@ -71,6 +89,7 @@ class PostModel {
     DateTime? updatedAt,
     String? userNickname,
     String? userProfileImage,
+    int? userStampCount,
   }) {
     return PostModel(
       id: id ?? this.id,
@@ -86,6 +105,7 @@ class PostModel {
       updatedAt: updatedAt ?? this.updatedAt,
       userNickname: userNickname ?? this.userNickname,
       userProfileImage: userProfileImage ?? this.userProfileImage,
+      userStampCount: userStampCount ?? this.userStampCount,
     );
   }
 

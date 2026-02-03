@@ -7,8 +7,6 @@ class HikingShareCard extends StatelessWidget {
   final double distanceKm;
   final int durationMinutes;
   final int steps;
-  final int calories;
-  final double elevationGain;
 
   const HikingShareCard({
     super.key,
@@ -17,8 +15,6 @@ class HikingShareCard extends StatelessWidget {
     required this.distanceKm,
     required this.durationMinutes,
     required this.steps,
-    required this.calories,
-    required this.elevationGain,
   });
 
   @override
@@ -117,13 +113,6 @@ class HikingShareCard extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(child: _buildStatItem('걸음수', _formatNumber(steps), Icons.directions_walk)),
-                    Expanded(child: _buildStatItem('칼로리', '$calories kcal', Icons.local_fire_department)),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(child: _buildStatItem('상승 고도', '${elevationGain.toStringAsFixed(0)} m', Icons.trending_up)),
                     const Expanded(child: SizedBox()),
                   ],
                 ),

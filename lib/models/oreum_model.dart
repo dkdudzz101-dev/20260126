@@ -13,6 +13,7 @@ class OreumModel {
   final String? _imageUrl;
   final String? _stampUrl;
   final String? _elevationUrl;
+  final String? _aerialImageUrl;
   final double? startLat;
   final double? startLng;
   final double? summitLat;
@@ -31,6 +32,8 @@ class OreumModel {
   final String? restriction;
   final String? restrictionNote;
   final String? origin;
+  final String? features;
+  final String? recommendedSeason;
 
   OreumModel({
     required this.id,
@@ -45,6 +48,7 @@ class OreumModel {
     String? imageUrl,
     String? stampUrl,
     String? elevationUrl,
+    String? aerialImageUrl,
     this.startLat,
     this.startLng,
     this.summitLat,
@@ -63,7 +67,9 @@ class OreumModel {
     this.restriction,
     this.restrictionNote,
     this.origin,
-  }) : _imageUrl = imageUrl, _stampUrl = stampUrl, _elevationUrl = elevationUrl;
+    this.features,
+    this.recommendedSeason,
+  }) : _imageUrl = imageUrl, _stampUrl = stampUrl, _elevationUrl = elevationUrl, _aerialImageUrl = aerialImageUrl;
 
   // 이미지 URL (상대경로 → 전체 URL 변환)
   String? get imageUrl {
@@ -84,6 +90,13 @@ class OreumModel {
     if (_elevationUrl == null) return null;
     if (_elevationUrl.startsWith('http')) return _elevationUrl;
     return '$_storageBaseUrl$_elevationUrl';
+  }
+
+  // 항공사진 URL (상대경로 → 전체 URL 변환)
+  String? get aerialImageUrl {
+    if (_aerialImageUrl == null) return null;
+    if (_aerialImageUrl.startsWith('http')) return _aerialImageUrl;
+    return '$_storageBaseUrl$_aerialImageUrl';
   }
 
   // 총 소요시간 (분)
@@ -135,6 +148,7 @@ class OreumModel {
       imageUrl: json['image_url'],
       stampUrl: json['stamp_url'],
       elevationUrl: json['elevation_url'],
+      aerialImageUrl: json['aerial_image_url'],
       startLat: json['start_lat']?.toDouble(),
       startLng: json['start_lng']?.toDouble(),
       summitLat: json['summit_lat']?.toDouble(),
@@ -155,6 +169,8 @@ class OreumModel {
       restriction: json['restriction'],
       restrictionNote: json['restriction_note'],
       origin: json['origin'],
+      features: json['features'],
+      recommendedSeason: json['recommended_season'],
     );
   }
 
@@ -172,6 +188,7 @@ class OreumModel {
       'image_url': _imageUrl,
       'stamp_url': _stampUrl,
       'elevation_url': _elevationUrl,
+      'aerial_image_url': _aerialImageUrl,
       'start_lat': startLat,
       'start_lng': startLng,
       'summit_lat': summitLat,
@@ -190,6 +207,8 @@ class OreumModel {
       'restriction': restriction,
       'restriction_note': restrictionNote,
       'origin': origin,
+      'features': features,
+      'recommended_season': recommendedSeason,
     };
   }
 }

@@ -129,10 +129,37 @@ class AuthProvider extends ChangeNotifier {
 
     _email = user.email;
     _odId = 'kakao_${user.id}';
-    _nickname = user.userMetadata?['name'] ?? user.userMetadata?['full_name'] ?? '제주탐험가';
-    _profileImage = user.userMetadata?['avatar_url'] ?? user.userMetadata?['picture'];
     _provider = 'kakao';
     _isLoggedIn = true;
+
+    // 기본값 (소셜 로그인에서 받아온 값)
+    String defaultNickname = user.userMetadata?['name'] ?? user.userMetadata?['full_name'] ?? '제주탐험가';
+    String? defaultProfileImage = user.userMetadata?['avatar_url'] ?? user.userMetadata?['picture'];
+
+    // DB에서 기존 사용자 정보 확인 (닉네임이 덮어씌워지는 것 방지)
+    try {
+      final existingUser = await _supabase
+          .from('users')
+          .select('nickname, profile_image')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (existingUser != null) {
+        // 기존 사용자면 DB에 저장된 닉네임/프로필 유지
+        _nickname = existingUser['nickname'] ?? defaultNickname;
+        _profileImage = existingUser['profile_image'] ?? defaultProfileImage;
+        debugPrint('기존 OAuth 사용자 - 닉네임 유지: $_nickname');
+      } else {
+        // 신규 사용자면 소셜 로그인 정보 사용
+        _nickname = defaultNickname;
+        _profileImage = defaultProfileImage;
+        debugPrint('신규 OAuth 사용자 - 닉네임: $_nickname');
+      }
+    } catch (e) {
+      debugPrint('OAuth 사용자 정보 조회 에러: $e');
+      _nickname = defaultNickname;
+      _profileImage = defaultProfileImage;
+    }
 
     // 로컬 저장소에 저장
     await _storage.write(key: 'odId', value: _odId);
@@ -424,32 +451,49 @@ class AuthProvider extends ChangeNotifier {
     final supabaseUserId = _supabase.auth.currentUser?.id;
     if (supabaseUserId == null) return;
 
-    // Supabase users 테이블에 저장
+    // 기존 사용자인지 확인
+    String finalNickname = nickname;
+    String? finalProfileImage = profileImage;
+
     try {
-      await _supabase.from('users').upsert({
-        'id': supabaseUserId,
-        'email': email,
-        'nickname': nickname,
-        'profile_image': profileImage,
-        'provider': provider,
-      });
-      debugPrint('사용자 프로필 저장 성공');
+      final existingUser = await _supabase
+          .from('users')
+          .select('nickname, profile_image')
+          .eq('id', supabaseUserId)
+          .maybeSingle();
+
+      if (existingUser != null) {
+        // 기존 사용자면 DB에 저장된 닉네임/프로필 유지
+        finalNickname = existingUser['nickname'] ?? nickname;
+        finalProfileImage = existingUser['profile_image'] ?? profileImage;
+        debugPrint('기존 사용자 - 닉네임 유지: $finalNickname');
+      } else {
+        // 신규 사용자면 새로 저장
+        await _supabase.from('users').insert({
+          'id': supabaseUserId,
+          'email': email,
+          'nickname': nickname,
+          'profile_image': profileImage,
+          'provider': provider,
+        });
+        debugPrint('신규 사용자 프로필 저장 성공');
+      }
     } catch (e) {
-      debugPrint('사용자 프로필 저장 에러: $e');
+      debugPrint('사용자 프로필 처리 에러: $e');
     }
 
     // 로컬 저장
     _odId = odId;
-    _nickname = nickname;
+    _nickname = finalNickname;
     _email = email;
-    _profileImage = profileImage;
+    _profileImage = finalProfileImage;
     _provider = provider;
     _isLoggedIn = true;
 
     await _storage.write(key: 'odId', value: odId);
-    await _storage.write(key: 'nickname', value: nickname);
+    await _storage.write(key: 'nickname', value: finalNickname);
     await _storage.write(key: 'email', value: email);
-    await _storage.write(key: 'profileImage', value: profileImage);
+    await _storage.write(key: 'profileImage', value: finalProfileImage);
     await _storage.write(key: 'provider', value: provider);
 
     notifyListeners();
