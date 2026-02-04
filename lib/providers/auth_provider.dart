@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:kakao_flutter_sdk/kakao_flutter_sdk.dart' as kakao;
 import 'package:app_links/app_links.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_naver_login/flutter_naver_login.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -360,24 +362,80 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  // 랜덤 문자열 생성 (nonce용)
+  String _generateRandomString(int length) {
+    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = Random.secure();
+    return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
+  }
+
+  // SHA256 해시
+  String _sha256ofString(String input) {
+    final bytes = utf8.encode(input);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
+  }
+
   // 애플 로그인
   Future<bool> signInWithApple() async {
     try {
+      debugPrint('=== 애플 로그인 시작 ===');
+
+      // nonce 생성 (Supabase 인증에 필요)
+      final rawNonce = _generateRandomString(32);
+      final hashedNonce = _sha256ofString(rawNonce);
+
+      // Apple 인증 요청 (타임아웃 추가)
       final credential = await SignInWithApple.getAppleIDCredential(
         scopes: [
           AppleIDAuthorizationScopes.email,
           AppleIDAuthorizationScopes.fullName,
         ],
+        nonce: hashedNonce,
+      ).timeout(
+        const Duration(seconds: 60),
+        onTimeout: () {
+          throw Exception('Apple 로그인 시간 초과');
+        },
       );
 
-      final odId = 'apple_${credential.userIdentifier}';
-      final userEmail = credential.email ?? '$odId@apple.local';
-      final fullName = credential.givenName != null
-          ? '${credential.givenName} ${credential.familyName ?? ''}'.trim()
-          : '제주탐험가';
+      debugPrint('Apple credential 획득 성공');
+      debugPrint('identityToken: ${credential.identityToken != null ? "있음" : "없음"}');
+      debugPrint('authorizationCode: ${credential.authorizationCode.isNotEmpty ? "있음" : "없음"}');
 
-      // Supabase Auth에 등록/로그인
-      final success = await _signInToSupabase(
+      // identityToken 확인
+      final idToken = credential.identityToken;
+      if (idToken == null) {
+        debugPrint('Apple identityToken이 null입니다');
+        throw Exception('Apple identityToken을 받지 못했습니다');
+      }
+
+      // Supabase에 Apple ID Token으로 로그인
+      final response = await _supabase.auth.signInWithIdToken(
+        provider: OAuthProvider.apple,
+        idToken: idToken,
+        nonce: rawNonce,
+      );
+
+      debugPrint('Supabase Apple 로그인 성공: ${response.user?.id}');
+
+      if (response.user == null) {
+        throw Exception('Supabase 사용자 정보를 받지 못했습니다');
+      }
+
+      // 사용자 정보 설정
+      final user = response.user!;
+      final odId = 'apple_${user.id}';
+      final userEmail = user.email ?? credential.email ?? '$odId@apple.local';
+
+      // Apple은 첫 로그인 시에만 이름 제공
+      String fullName = '제주탐험가';
+      if (credential.givenName != null) {
+        fullName = '${credential.givenName} ${credential.familyName ?? ''}'.trim();
+      }
+
+      // 프로필 저장
+      await _saveUserProfile(
         odId: odId,
         email: userEmail,
         nickname: fullName,
@@ -385,9 +443,24 @@ class AuthProvider extends ChangeNotifier {
         provider: 'apple',
       );
 
-      return success;
-    } catch (e) {
-      debugPrint('애플 로그인 에러: $e');
+      debugPrint('=== 애플 로그인 완료 ===');
+      return true;
+    } on SignInWithAppleAuthorizationException catch (e) {
+      debugPrint('Apple 인증 예외: ${e.code} - ${e.message}');
+      if (e.code == AuthorizationErrorCode.canceled) {
+        debugPrint('사용자가 Apple 로그인을 취소했습니다');
+      }
+      return false;
+    } on TimeoutException catch (e) {
+      debugPrint('Apple 로그인 타임아웃: $e');
+      return false;
+    } on AuthException catch (e) {
+      debugPrint('Supabase Auth 에러: ${e.message}');
+      return false;
+    } catch (e, stackTrace) {
+      debugPrint('=== 애플 로그인 에러 ===');
+      debugPrint('에러: $e');
+      debugPrint('스택: $stackTrace');
       return false;
     }
   }
