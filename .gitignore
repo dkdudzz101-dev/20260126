@@ -47,3 +47,4 @@ android/key.properties
 *.jks
 *.keystore
 android/nul
+*.hprof

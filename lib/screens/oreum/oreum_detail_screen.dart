@@ -11,8 +11,12 @@ import '../../providers/oreum_provider.dart';
 import '../../services/review_service.dart';
 import '../../services/blog_service.dart';
 import '../../services/map_service.dart';
+import '../../services/oreum_service.dart';
+import '../../models/oreum_image_model.dart';
 import '../hiking/hiking_screen.dart';
 import '../map/map_screen.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:photo_view/photo_view_gallery.dart';
 
 class OreumDetailScreen extends StatefulWidget {
   final OreumModel oreum;
@@ -27,16 +31,36 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   OreumModel get oreum => widget.oreum;
   final ReviewService _reviewService = ReviewService();
   final BlogService _blogService = BlogService();
+  final OreumService _oreumService = OreumService();
   List<Map<String, dynamic>> _reviews = [];
   bool _isLoadingReviews = true;
   List<BlogPost> _blogPosts = [];
   bool _isLoadingBlogs = true;
+  List<OreumImageModel> _galleryImages = [];
+  bool _isLoadingGallery = true;
 
   @override
   void initState() {
     super.initState();
     _loadReviews();
     _loadBlogPosts();
+    _loadGalleryImages();
+  }
+
+  Future<void> _loadGalleryImages() async {
+    try {
+      final images = await _oreumService.getGalleryImages(oreum.id);
+      if (mounted) {
+        setState(() {
+          _galleryImages = images;
+          _isLoadingGallery = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingGallery = false);
+      }
+    }
   }
 
   Future<void> _loadBlogPosts() async {
@@ -85,6 +109,8 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
                   _buildRestrictionBanner(),
                 _buildOreumImage(),
+                // 갤러리 섹션
+                if (_galleryImages.isNotEmpty) _buildGallerySection(),
                 _buildOreumInfoList(),
                 // 등산로 보기 버튼
                 _buildTrailViewButton(),
@@ -981,40 +1007,151 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
 
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: AspectRatio(
-        aspectRatio: 2 / 1,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            color: Colors.white,
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: displayImageUrl != null
-              ? Image.network(
-                  displayImageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    color: AppColors.surface,
-                    child: const Center(
-                      child: Icon(Icons.terrain, size: 48, color: AppColors.textHint),
-                    ),
-                  ),
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Container(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          AspectRatio(
+            aspectRatio: 2 / 1,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                color: Colors.white,
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: displayImageUrl != null
+                  ? Image.network(
+                      displayImageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        color: AppColors.surface,
+                        child: const Center(
+                          child: Icon(Icons.terrain, size: 48, color: AppColors.textHint),
+                        ),
+                      ),
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Container(
+                          color: AppColors.surface,
+                          child: const Center(
+                            child: CircularProgressIndicator(),
+                          ),
+                        );
+                      },
+                    )
+                  : Container(
                       color: AppColors.surface,
                       child: const Center(
-                        child: CircularProgressIndicator(),
+                        child: Icon(Icons.terrain, size: 48, color: AppColors.textHint),
                       ),
-                    );
-                  },
-                )
-              : Container(
-                  color: AppColors.surface,
-                  child: const Center(
-                    child: Icon(Icons.terrain, size: 48, color: AppColors.textHint),
+                    ),
+            ),
+          ),
+          // 사진 출처 표시
+          if (oreum.imageSource != null && oreum.imageSource!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, right: 4),
+              child: Text(
+                '출처: ${oreum.imageSource}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textHint,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGallerySection() {
+    if (_isLoadingGallery) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_galleryImages.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final imageSource = _galleryImages.first.imageSource;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Row(
+            children: [
+              const Icon(Icons.photo_library, size: 20, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Text(
+                '갤러리 (${_galleryImages.length})',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 120,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: _galleryImages.length,
+            itemBuilder: (context, index) {
+              final image = _galleryImages[index];
+              return GestureDetector(
+                onTap: () => _openGalleryViewer(index),
+                child: Container(
+                  width: 160,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: AppColors.surface,
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Image.network(
+                    image.imageUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => const Center(
+                      child: Icon(Icons.broken_image, color: AppColors.textHint),
+                    ),
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                    },
                   ),
                 ),
+              );
+            },
+          ),
+        ),
+        if (imageSource != null && imageSource.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Text(
+              '출처: $imageSource',
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.textHint,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _openGalleryViewer(int initialIndex) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => GalleryViewerScreen(
+          images: _galleryImages,
+          initialIndex: initialIndex,
         ),
       ),
     );
@@ -1747,5 +1884,83 @@ ${oreum.description ?? '제주의 아름다운 오름을 만나보세요!'}
         );
       }
     }
+  }
+}
+
+// 갤러리 전체화면 뷰어
+class GalleryViewerScreen extends StatefulWidget {
+  final List<OreumImageModel> images;
+  final int initialIndex;
+
+  const GalleryViewerScreen({
+    super.key,
+    required this.images,
+    required this.initialIndex,
+  });
+
+  @override
+  State<GalleryViewerScreen> createState() => _GalleryViewerScreenState();
+}
+
+class _GalleryViewerScreenState extends State<GalleryViewerScreen> {
+  late int _currentIndex;
+  late PageController _pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text('${_currentIndex + 1} / ${widget.images.length}'),
+        actions: [
+          if (widget.images[_currentIndex].imageSource != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Center(
+                child: Text(
+                  '출처: ${widget.images[_currentIndex].imageSource}',
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+              ),
+            ),
+        ],
+      ),
+      body: PhotoViewGallery.builder(
+        pageController: _pageController,
+        itemCount: widget.images.length,
+        builder: (context, index) {
+          return PhotoViewGalleryPageOptions(
+            imageProvider: NetworkImage(widget.images[index].imageUrl),
+            minScale: PhotoViewComputedScale.contained,
+            maxScale: PhotoViewComputedScale.covered * 2,
+            errorBuilder: (context, error, stackTrace) => const Center(
+              child: Icon(Icons.broken_image, color: Colors.white54, size: 48),
+            ),
+          );
+        },
+        onPageChanged: (index) {
+          setState(() => _currentIndex = index);
+        },
+        loadingBuilder: (context, event) => const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+        backgroundDecoration: const BoxDecoration(color: Colors.black),
+      ),
+    );
   }
 }

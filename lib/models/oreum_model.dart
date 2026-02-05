@@ -34,6 +34,7 @@ class OreumModel {
   final String? origin;
   final String? features;
   final String? recommendedSeason;
+  final String? imageSource; // 사진 출처
 
   OreumModel({
     required this.id,
@@ -69,6 +70,7 @@ class OreumModel {
     this.origin,
     this.features,
     this.recommendedSeason,
+    this.imageSource,
   }) : _imageUrl = imageUrl, _stampUrl = stampUrl, _elevationUrl = elevationUrl, _aerialImageUrl = aerialImageUrl;
 
   // 이미지 URL (상대경로 → 전체 URL 변환)
@@ -171,6 +173,7 @@ class OreumModel {
       origin: json['origin'],
       features: json['features'],
       recommendedSeason: json['recommended_season'],
+      imageSource: json['image_source'],
     );
   }
 
@@ -209,6 +212,7 @@ class OreumModel {
       'origin': origin,
       'features': features,
       'recommended_season': recommendedSeason,
+      'image_source': imageSource,
     };
   }
 }

@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
 import '../models/oreum_model.dart';
+import '../models/oreum_image_model.dart';
 
 class OreumService {
   final SupabaseClient _client = SupabaseConfig.client;
@@ -141,5 +142,22 @@ class OreumService {
   // 갤러리 이미지 URL
   String getGalleryImageUrl(String oreumId, String fileName) {
     return _client.storage.from('oreum-data').getPublicUrl('$oreumId/gallery/$fileName');
+  }
+
+  // 갤러리 이미지 목록 가져오기
+  Future<List<OreumImageModel>> getGalleryImages(String oreumId) async {
+    try {
+      final response = await _client
+          .from('oreum_images')
+          .select()
+          .eq('oreum_id', oreumId)
+          .order('sort_order');
+
+      return (response as List)
+          .map((json) => OreumImageModel.fromJson(json))
+          .toList();
+    } catch (e) {
+      return [];
+    }
   }
 }
