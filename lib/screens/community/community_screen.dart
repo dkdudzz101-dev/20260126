@@ -9,6 +9,9 @@ import '../../providers/auth_provider.dart';
 import '../../providers/oreum_provider.dart';
 import '../../models/post_model.dart';
 import '../../services/community_service.dart';
+import '../../services/block_service.dart';
+import '../../services/report_service.dart';
+import '../../utils/content_filter.dart';
 import '../auth/login_screen.dart';
 
 class CommunityScreen extends StatefulWidget {
@@ -29,6 +32,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<CommunityProvider>().loadBlockedUsers();
       context.read<CommunityProvider>().loadPosts(filter: _selectedFilter);
     });
   }
@@ -652,6 +656,20 @@ class _WritePostSheetState extends State<WritePostSheet> {
   Future<void> _submitPost() async {
     if (_contentController.text.trim().isEmpty) return;
 
+    // 콘텐츠 필터 체크
+    final filterResult = ContentFilter.check(_contentController.text.trim());
+    if (!filterResult.isClean) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(filterResult.message ?? '부적절한 표현이 포함되어 있습니다.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() {
       _isUploading = true;
     });
@@ -1208,16 +1226,24 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             icon: const Icon(Icons.share_outlined),
             onPressed: _sharePost,
           ),
-          // 더보기 메뉴 (본인 글일 때 삭제 옵션)
-          if (isMyPost)
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert),
-              onSelected: (value) {
-                if (value == 'delete') {
-                  _showDeleteConfirmDialog();
-                }
-              },
-              itemBuilder: (context) => [
+          // 더보기 메뉴
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'delete') {
+                _showDeleteConfirmDialog();
+              } else if (value == 'report') {
+                _showReportDialog(context, 'post', widget.post.id);
+              } else if (value == 'block') {
+                _showBlockConfirmDialog(
+                  context,
+                  widget.post.userId,
+                  widget.post.userNickname ?? '익명',
+                );
+              }
+            },
+            itemBuilder: (context) => [
+              if (isMyPost)
                 const PopupMenuItem(
                   value: 'delete',
                   child: Row(
@@ -1228,8 +1254,30 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     ],
                   ),
                 ),
+              if (!isMyPost) ...[
+                const PopupMenuItem(
+                  value: 'report',
+                  child: Row(
+                    children: [
+                      Icon(Icons.flag_outlined, color: AppColors.textSecondary),
+                      SizedBox(width: 8),
+                      Text('신고하기'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'block',
+                  child: Row(
+                    children: [
+                      Icon(Icons.block, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('차단하기', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
               ],
-            ),
+            ],
+          ),
         ],
       ),
       body: Column(
@@ -1429,6 +1477,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   Widget _buildCommentItem(CommentModel comment) {
+    final authProvider = context.read<AuthProvider>();
+    final isMyComment = authProvider.user?.id == comment.userId;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1463,8 +1514,62 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             ],
           ),
         ),
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.more_horiz, size: 16, color: AppColors.textHint),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          onSelected: (value) {
+            if (value == 'delete') {
+              _deleteComment(comment);
+            } else if (value == 'report') {
+              _showReportDialog(context, 'comment', comment.id);
+            } else if (value == 'block') {
+              _showBlockConfirmDialog(
+                context,
+                comment.userId,
+                comment.userNickname ?? '익명',
+              );
+            }
+          },
+          itemBuilder: (context) => [
+            if (isMyComment)
+              const PopupMenuItem(
+                value: 'delete',
+                child: Text('삭제', style: TextStyle(color: Colors.red)),
+              ),
+            if (!isMyComment) ...[
+              const PopupMenuItem(
+                value: 'report',
+                child: Text('신고하기'),
+              ),
+              const PopupMenuItem(
+                value: 'block',
+                child: Text('차단하기', style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ],
+        ),
       ],
     );
+  }
+
+  void _deleteComment(CommentModel comment) async {
+    final provider = context.read<CommunityProvider>();
+    try {
+      await CommunityService().deleteComment(comment.id, widget.post.id);
+      await provider.loadComments(widget.post.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('댓글이 삭제되었습니다')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('댓글 삭제에 실패했습니다')),
+        );
+      }
+    }
   }
 
   Widget _buildCommentInput() {
@@ -1526,6 +1631,20 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       return;
     }
 
+    // 콘텐츠 필터 체크
+    final filterResult = ContentFilter.check(_commentController.text.trim());
+    if (!filterResult.isClean) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(filterResult.message ?? '부적절한 표현이 포함되어 있습니다.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+      return;
+    }
+
     final provider = context.read<CommunityProvider>();
     final success = await provider.addComment(
       postId: widget.post.id,
@@ -1580,6 +1699,153 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showReportDialog(BuildContext ctx, String targetType, String targetId) {
+    String? selectedReason;
+    final reasons = ReportService.reportReasons;
+
+    showDialog(
+      context: ctx,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('신고하기'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '신고 사유를 선택해주세요.',
+                  style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                ...reasons.entries.map((entry) => RadioListTile<String>(
+                  title: Text(entry.value, style: const TextStyle(fontSize: 14)),
+                  value: entry.key,
+                  groupValue: selectedReason,
+                  activeColor: AppColors.primary,
+                  onChanged: (value) => setDialogState(() => selectedReason = value),
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                )),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('취소'),
+            ),
+            ElevatedButton(
+              onPressed: selectedReason == null
+                  ? null
+                  : () async {
+                      try {
+                        final reportService = ReportService();
+                        if (targetType == 'post') {
+                          await reportService.reportPost(
+                            postId: targetId,
+                            reason: selectedReason!,
+                          );
+                        } else if (targetType == 'comment') {
+                          await reportService.reportComment(
+                            commentId: targetId,
+                            reason: selectedReason!,
+                          );
+                        }
+                        if (dialogContext.mounted) {
+                          Navigator.pop(dialogContext);
+                        }
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(content: Text('신고가 접수되었습니다. 검토 후 조치하겠습니다.')),
+                          );
+                        }
+                      } catch (e) {
+                        if (dialogContext.mounted) {
+                          Navigator.pop(dialogContext);
+                        }
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(content: Text('신고 실패: $e')),
+                          );
+                        }
+                      }
+                    },
+              child: const Text('신고'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showBlockConfirmDialog(BuildContext ctx, String userId, String nickname) {
+    showDialog(
+      context: ctx,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('사용자 차단'),
+        content: Text(
+          '$nickname 님을 차단하시겠습니까?\n\n'
+          '차단하면 해당 사용자의 게시글과 댓글이 보이지 않습니다.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              try {
+                final blockService = BlockService();
+                final reportService = ReportService();
+
+                // 차단 처리
+                await blockService.blockUser(
+                  blockedUserId: userId,
+                  reason: '사용자가 직접 차단',
+                );
+
+                // 자동 신고 (Apple 요구사항: 차단 시 개발자에게 알림)
+                await reportService.reportUser(
+                  targetUserId: userId,
+                  reason: 'user_blocked',
+                  details: '$nickname 사용자를 차단함 (자동 신고)',
+                );
+
+                // Provider 업데이트 (즉시 피드에서 제거)
+                if (ctx.mounted) {
+                  ctx.read<CommunityProvider>().blockUser(userId);
+                }
+
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+                if (ctx.mounted) {
+                  Navigator.pop(ctx); // 상세 화면 닫기
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text('$nickname 님을 차단했습니다')),
+                  );
+                }
+              } catch (e) {
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text('차단 실패: $e')),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('차단'),
           ),
         ],
       ),

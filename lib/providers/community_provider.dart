@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/post_model.dart';
 import '../services/community_service.dart';
+import '../services/block_service.dart';
 
 class CommunityProvider extends ChangeNotifier {
   final CommunityService _communityService = CommunityService();
+  final BlockService _blockService = BlockService();
 
   List<PostModel> _posts = [];
   List<CommentModel> _comments = [];
@@ -13,6 +15,7 @@ class CommunityProvider extends ChangeNotifier {
   String? _selectedCategory;
   String? _selectedOreumId;
   final Set<String> _likedPosts = {};
+  Set<String> _blockedUserIds = {};
 
   List<PostModel> get posts => _posts;
   List<CommentModel> get comments => _comments;
@@ -44,6 +47,11 @@ class CommunityProvider extends ChangeNotifier {
       }
 
       _posts = response.map((data) => PostModel.fromSupabase(data)).toList();
+
+      // 차단된 사용자 게시글 필터링
+      if (_blockedUserIds.isNotEmpty) {
+        _posts = _posts.where((p) => !_blockedUserIds.contains(p.userId)).toList();
+      }
 
       // 카테고리 필터 적용
       if (_selectedCategory != null && _selectedCategory != '전체') {
@@ -177,6 +185,11 @@ class CommunityProvider extends ChangeNotifier {
     try {
       final response = await _communityService.getComments(postId);
       _comments = response.map((data) => CommentModel.fromSupabase(data)).toList();
+
+      // 차단된 사용자 댓글 필터링
+      if (_blockedUserIds.isNotEmpty) {
+        _comments = _comments.where((c) => !_blockedUserIds.contains(c.userId)).toList();
+      }
     } catch (e) {
       _error = e.toString();
       debugPrint('댓글 로드 오류: $e');
@@ -230,5 +243,23 @@ class CommunityProvider extends ChangeNotifier {
       debugPrint('댓글 작성 오류: $e');
       return false;
     }
+  }
+
+  // 차단된 사용자 목록 로드
+  Future<void> loadBlockedUsers() async {
+    try {
+      final ids = await _blockService.getBlockedUserIds();
+      _blockedUserIds = ids.toSet();
+    } catch (e) {
+      debugPrint('차단 목록 로드 오류: $e');
+    }
+  }
+
+  // 사용자 차단 (즉시 피드에서 제거)
+  void blockUser(String userId) {
+    _blockedUserIds.add(userId);
+    _posts = _posts.where((p) => p.userId != userId).toList();
+    _comments = _comments.where((c) => c.userId != userId).toList();
+    notifyListeners();
   }
 }

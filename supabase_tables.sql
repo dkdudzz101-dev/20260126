@@ -412,3 +412,31 @@ CREATE POLICY "Users can insert own routes" ON hiking_routes
 
 CREATE POLICY "Users can delete own routes" ON hiking_routes
   FOR DELETE USING (auth.uid() = user_id);
+
+-- ============================================
+-- 16. blocked_users (사용자 차단)
+-- ============================================
+CREATE TABLE IF NOT EXISTS blocked_users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  blocker_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(blocker_id, blocked_id)
+);
+
+-- blocked_users 인덱스
+CREATE INDEX IF NOT EXISTS idx_blocked_users_blocker ON blocked_users(blocker_id);
+CREATE INDEX IF NOT EXISTS idx_blocked_users_blocked ON blocked_users(blocked_id);
+
+-- blocked_users RLS
+ALTER TABLE blocked_users ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own blocks" ON blocked_users
+  FOR SELECT USING (auth.uid() = blocker_id);
+
+CREATE POLICY "Users can insert own blocks" ON blocked_users
+  FOR INSERT WITH CHECK (auth.uid() = blocker_id);
+
+CREATE POLICY "Users can delete own blocks" ON blocked_users
+  FOR DELETE USING (auth.uid() = blocker_id);

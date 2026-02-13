@@ -601,20 +601,65 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // 닉네임 중복 확인
+  Future<bool> checkNicknameExists(String nickname) async {
+    try {
+      final result = await _supabase
+          .from('users')
+          .select('id')
+          .eq('nickname', nickname)
+          .maybeSingle();
+      return result != null;
+    } catch (e) {
+      debugPrint('닉네임 중복 확인 에러: $e');
+      return false; // 에러 시 일단 통과 (가입 시도 허용)
+    }
+  }
+
+  // 이메일 중복 확인
+  Future<bool> checkEmailExists(String email) async {
+    try {
+      final result = await _supabase
+          .from('users')
+          .select('id')
+          .eq('real_email', email)
+          .maybeSingle();
+      return result != null;
+    } catch (e) {
+      debugPrint('이메일 중복 확인 에러: $e');
+      return false;
+    }
+  }
+
   // 아이디/비밀번호 회원가입
   Future<Map<String, dynamic>> signUpWithId({
     required String userId,
     required String password,
+    required String name,
     required String nickname,
+    required String email,  // 실제 이메일 (비밀번호 찾기용)
+    required DateTime birthDate,
   }) async {
     try {
-      // 아이디를 이메일 형식으로 변환
-      final email = '$userId@local.app';
+      // 아이디를 이메일 형식으로 변환 (Supabase Auth용)
+      final authEmail = '$userId@local.app';
 
-      // 아이디 중복 확인
+      // 1. 닉네임 중복 확인
+      final nicknameCheck = await checkNicknameExists(nickname);
+      if (nicknameCheck) {
+        return {'success': false, 'error': '이미 사용 중인 닉네임입니다.'};
+      }
+
+      // 2. 이메일 중복 확인
+      final emailCheck = await checkEmailExists(email);
+      if (emailCheck) {
+        return {'success': false, 'error': '이미 사용 중인 이메일입니다.'};
+      }
+
+      // 3. 아이디 중복 확인
       try {
         await _supabase.auth.signInWithPassword(
-          email: email,
+          email: authEmail,
           password: password,
         );
         // 로그인 성공 = 이미 존재하는 아이디
@@ -622,9 +667,7 @@ class AuthProvider extends ChangeNotifier {
         return {'success': false, 'error': '이미 사용 중인 아이디입니다.'};
       } on AuthException catch (e) {
         if (!e.message.contains('Invalid login credentials')) {
-          // 이메일 미인증 오류일 수 있음
           if (e.message.contains('Email not confirmed')) {
-            // 이미 가입되어 있지만 이메일 미인증 상태 - 재시도 가능
             debugPrint('이메일 미인증 상태, 회원가입 진행');
           } else {
             return {'success': false, 'error': '회원가입 중 오류가 발생했습니다.'};
@@ -634,30 +677,26 @@ class AuthProvider extends ChangeNotifier {
 
       // 회원가입
       final signUpResponse = await _supabase.auth.signUp(
-        email: email,
+        email: authEmail,
         password: password,
-        emailRedirectTo: null, // 이메일 확인 리다이렉트 비활성화
+        emailRedirectTo: null,
       );
 
-      // 회원가입 성공 여부 확인
       if (signUpResponse.user == null) {
         return {'success': false, 'error': '회원가입에 실패했습니다.'};
       }
 
-      // 회원가입 후 바로 로그인 시도 (이메일 인증 없이 사용하기 위해)
+      // 회원가입 후 바로 로그인 시도
       try {
         await _supabase.auth.signInWithPassword(
-          email: email,
+          email: authEmail,
           password: password,
         );
       } on AuthException catch (e) {
         if (e.message.contains('Email not confirmed')) {
-          // Supabase에서 이메일 확인이 필요한 경우
-          // Authentication > Providers > Email에서 "Confirm email" 비활성화 필요
           debugPrint('이메일 확인 필요 - Supabase 설정 확인 필요');
-          // 그래도 로컬 로그인 처리
           _odId = 'local_$userId';
-          _email = email;
+          _email = authEmail;
           _nickname = nickname;
           _provider = 'local';
           _isLoggedIn = true;
@@ -673,11 +712,14 @@ class AuthProvider extends ChangeNotifier {
         rethrow;
       }
 
-      // 프로필 저장
-      await _saveUserProfile(
+      // 프로필 저장 (추가 정보 포함)
+      await _saveUserProfileWithDetails(
         odId: 'local_$userId',
-        email: email,
+        authEmail: authEmail,
+        realEmail: email,
+        name: name,
         nickname: nickname,
+        birthDate: birthDate,
         profileImage: null,
         provider: 'local',
       );
@@ -687,6 +729,53 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('회원가입 에러: $e');
       return {'success': false, 'error': '회원가입 중 오류가 발생했습니다.'};
     }
+  }
+
+  // 사용자 프로필 저장 (상세 정보 포함)
+  Future<void> _saveUserProfileWithDetails({
+    required String odId,
+    required String authEmail,
+    required String realEmail,
+    required String name,
+    required String nickname,
+    required DateTime birthDate,
+    String? profileImage,
+    required String provider,
+  }) async {
+    final supabaseUserId = _supabase.auth.currentUser?.id;
+    if (supabaseUserId == null) return;
+
+    try {
+      await _supabase.from('users').insert({
+        'id': supabaseUserId,
+        'email': authEmail,
+        'real_email': realEmail,
+        'name': name,
+        'nickname': nickname,
+        'birth_date': birthDate.toIso8601String().split('T')[0],
+        'profile_image': profileImage,
+        'provider': provider,
+      });
+      debugPrint('신규 사용자 프로필 저장 성공');
+    } catch (e) {
+      debugPrint('사용자 프로필 저장 에러: $e');
+    }
+
+    // 로컬 저장
+    _odId = odId;
+    _nickname = nickname;
+    _email = authEmail;
+    _profileImage = profileImage;
+    _provider = provider;
+    _isLoggedIn = true;
+
+    await _storage.write(key: 'odId', value: odId);
+    await _storage.write(key: 'nickname', value: nickname);
+    await _storage.write(key: 'email', value: authEmail);
+    await _storage.write(key: 'profileImage', value: profileImage);
+    await _storage.write(key: 'provider', value: provider);
+
+    notifyListeners();
   }
 
   // 아이디/비밀번호 로그인
@@ -747,8 +836,16 @@ class AuthProvider extends ChangeNotifier {
   }
 
   // 프로필 업데이트
-  Future<void> updateProfile({String? nickname, String? profileImage, double? weight}) async {
+  Future<Map<String, dynamic>> updateProfile({String? nickname, String? profileImage, double? weight}) async {
     final supabaseUserId = _supabase.auth.currentUser?.id;
+
+    // 닉네임 변경 시 중복 확인
+    if (nickname != null && nickname != _nickname) {
+      final exists = await checkNicknameExists(nickname);
+      if (exists) {
+        return {'success': false, 'error': '이미 사용 중인 닉네임입니다.'};
+      }
+    }
 
     if (nickname != null) {
       _nickname = nickname;
@@ -773,10 +870,12 @@ class AuthProvider extends ChangeNotifier {
         }).eq('id', supabaseUserId);
       } catch (e) {
         debugPrint('프로필 업데이트 에러: $e');
+        return {'success': false, 'error': '프로필 업데이트 중 오류가 발생했습니다.'};
       }
     }
 
     notifyListeners();
+    return {'success': true};
   }
 
   // 계정 삭제 (탈퇴)
@@ -789,6 +888,14 @@ class AuthProvider extends ChangeNotifier {
       }
 
       // 1. 관련 데이터 삭제 (stamps, hiking_logs, bookmarks 등)
+      try {
+        // 차단 목록 삭제
+        await _supabase.from('blocked_users').delete().eq('blocker_id', supabaseUserId);
+        debugPrint('차단 목록 삭제 완료');
+      } catch (e) {
+        debugPrint('차단 목록 삭제 에러 (무시): $e');
+      }
+
       try {
         // 스탬프 삭제
         await _supabase.from('stamps').delete().eq('user_id', supabaseUserId);

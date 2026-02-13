@@ -11,6 +11,7 @@ import '../../providers/badge_provider.dart';
 import '../../models/badge_model.dart';
 import '../../services/background_location_service.dart';
 import '../auth/login_screen.dart';
+import '../menu/blocked_users_screen.dart';
 import 'hiking_detail_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -590,7 +591,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           width: 44,
                           height: 44,
                           decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.1),
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: stamp.imageUrl != null
@@ -675,6 +676,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onTap: () => _showAppInfo(context),
           ),
           if (authProvider.isLoggedIn) ...[
+            const Divider(height: 1),
+            _buildMenuItem(
+              icon: Icons.block,
+              title: '차단 관리',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const BlockedUsersScreen()),
+              ),
+            ),
+            const Divider(height: 1),
+            _buildMenuItem(
+              icon: Icons.delete_forever_outlined,
+              title: '계정 탈퇴',
+              isDestructive: true,
+              onTap: () => _showDeleteAccount(context),
+            ),
             const Divider(height: 1),
             _buildMenuItem(
               icon: Icons.logout,
@@ -906,7 +923,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () {
+                      onPressed: () async {
                         final newNickname = nicknameController.text.trim();
                         if (newNickname.isEmpty) {
                           ScaffoldMessenger.of(dialogContext).showSnackBar(
@@ -914,11 +931,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           );
                           return;
                         }
-                        authProvider.updateProfile(nickname: newNickname);
-                        Navigator.pop(dialogContext);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('프로필이 수정되었습니다')),
-                        );
+                        final result = await authProvider.updateProfile(nickname: newNickname);
+                        if (!dialogContext.mounted) return;
+                        if (result['success'] == true) {
+                          Navigator.pop(dialogContext);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('프로필이 수정되었습니다')),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            SnackBar(content: Text(result['error'] ?? '닉네임 변경 실패')),
+                          );
+                        }
                       },
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
@@ -1389,6 +1413,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDeleteAccount(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('계정 탈퇴'),
+        content: const Text(
+          '정말 탈퇴하시겠습니까?\n\n모든 데이터(스탬프, 게시글 등)가 삭제되며 복구할 수 없습니다.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              // 로딩 표시
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => const Center(child: CircularProgressIndicator()),
+              );
+
+              final result = await context.read<AuthProvider>().deleteAccount();
+
+              if (!context.mounted) return;
+              Navigator.pop(context); // 로딩 닫기
+
+              if (result['success'] == true) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('계정이 탈퇴되었습니다. 이용해주셔서 감사합니다.')),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(result['error'] ?? '탈퇴에 실패했습니다')),
+                );
+              }
+            },
+            child: const Text('탈퇴하기'),
           ),
         ],
       ),

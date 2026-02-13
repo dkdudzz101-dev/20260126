@@ -16,6 +16,7 @@ import '../../services/hiking_route_service.dart';
 import '../../services/share_service.dart';
 import '../../services/background_location_service.dart';
 import '../../utils/calorie_calculator.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/stamp_provider.dart';
 import '../../widgets/hiking_share_card.dart';
@@ -235,6 +236,76 @@ class _HikingScreenState extends State<HikingScreen> {
     super.dispose();
   }
 
+  /// 백그라운드 위치 권한 명시적 공개 다이얼로그 (Google Play 정책 필수)
+  Future<bool> _requestBackgroundLocationWithDisclosure() async {
+    // 이미 백그라운드 위치 권한이 있으면 바로 통과
+    final bgStatus = await Permission.locationAlways.status;
+    if (bgStatus.isGranted) return true;
+
+    // 먼저 포그라운드 위치 권한 확인
+    final fgStatus = await Permission.locationWhenInUse.status;
+    if (!fgStatus.isGranted) {
+      final fgResult = await Permission.locationWhenInUse.request();
+      if (!fgResult.isGranted) return false;
+    }
+
+    // 명시적 공개 다이얼로그 표시
+    final agreed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.location_on, color: AppColors.primary),
+            const SizedBox(width: 8),
+            const Text('백그라운드 위치 사용 안내'),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '제주오름 앱은 다음 목적으로 백그라운드에서 위치 정보를 수집합니다:',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            SizedBox(height: 12),
+            Text('1. 등산 중 GPS 경로를 기록하여 이동 거리, 고도, 소요 시간을 측정합니다.'),
+            SizedBox(height: 8),
+            Text('2. 오름 정상 100m 이내 도달 시 자동으로 스탬프를 인증합니다.'),
+            SizedBox(height: 12),
+            Text(
+              '위치 데이터는 등산 기록 저장 목적으로만 사용되며, 등산을 종료하면 백그라운드 위치 수집이 즉시 중단됩니다.',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+            SizedBox(height: 12),
+            Text(
+              '다음 화면에서 위치 권한을 "항상 허용"으로 설정해주세요.',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('거부'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('동의 및 계속'),
+          ),
+        ],
+      ),
+    );
+
+    if (agreed != true) return false;
+
+    // 시스템 권한 요청
+    final result = await Permission.locationAlways.request();
+    return result.isGranted;
+  }
+
   Future<void> _initializeLocation() async {
     final hasPermission = await _mapService.checkAndRequestPermission();
     if (!hasPermission) {
@@ -393,6 +464,17 @@ class _HikingScreenState extends State<HikingScreen> {
   }
 
   void _startHiking() async {
+    // 백그라운드 위치 권한 명시적 공개 및 동의
+    final bgGranted = await _requestBackgroundLocationWithDisclosure();
+    if (!bgGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('백그라운드 위치 권한이 필요합니다. 설정에서 "항상 허용"을 선택해주세요.')),
+        );
+      }
+      return;
+    }
+
     // 시작 걸음수 기록
     final pedometer = context.read<PedometerService>();
     _startSteps = pedometer.todaySteps;
