@@ -20,6 +20,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/stamp_provider.dart';
 import '../../widgets/hiking_share_card.dart';
+import '../oreum/oreum_error_report_screen.dart';
 
 class HikingScreen extends StatefulWidget {
   final OreumModel oreum;
@@ -75,6 +76,23 @@ class _HikingScreenState extends State<HikingScreen> {
   // 정상 도착 추적
   double _distanceToSummit = 0;
   bool _reachedSummit = false;
+  bool _summitDialogShown = false;
+
+  // 하산 모드
+  bool _isDescending = false;
+  bool _descentCompleted = false;
+  double _descentDistance = 0;
+  int _descentSeconds = 0;
+  int _descentSteps = 0;
+  int _descentStartSteps = 0;
+  double _descentElevationGain = 0;
+  double _descentElevationLoss = 0;
+  int _descentCalories = 0;
+  bool _descentDialogShown = false;
+  // 등산 데이터 스냅샷 (하산 시작 시 저장)
+  double _ascentDistance = 0;
+  int _ascentSeconds = 0;
+  int _ascentSteps = 0;
 
   // 마커
   Set<Marker> _markers = {};
@@ -464,17 +482,6 @@ class _HikingScreenState extends State<HikingScreen> {
   }
 
   void _startHiking() async {
-    // 백그라운드 위치 권한 명시적 공개 및 동의
-    final bgGranted = await _requestBackgroundLocationWithDisclosure();
-    if (!bgGranted) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('백그라운드 위치 권한이 필요합니다. 설정에서 "항상 허용"을 선택해주세요.')),
-        );
-      }
-      return;
-    }
-
     // 시작 걸음수 기록
     final pedometer = context.read<PedometerService>();
     _startSteps = pedometer.todaySteps;
@@ -499,8 +506,12 @@ class _HikingScreenState extends State<HikingScreen> {
     // 시설물 마커 상태 유지 (선택된 마커 색상 유지)
     _buildFacilityMarkers();
 
-    // 백그라운드 위치 서비스 시작 (자동 스탬프 인증용)
-    await BackgroundLocationService.startService();
+    // 백그라운드 위치 서비스 시작 (권한이 이미 있으면 자동 시작)
+    Permission.locationAlways.status.then((status) {
+      if (status.isGranted) {
+        BackgroundLocationService.startService();
+      }
+    });
 
     // 타이머 시작 (걸음수도 함께 업데이트)
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -510,6 +521,12 @@ class _HikingScreenState extends State<HikingScreen> {
           _elapsedSeconds++;
           _hikingSteps = currentSteps - _startSteps;
           if (_hikingSteps < 0) _hikingSteps = 0;
+
+          if (_isDescending) {
+            _descentSeconds++;
+            _descentSteps = currentSteps - _descentStartSteps;
+            if (_descentSteps < 0) _descentSteps = 0;
+          }
         });
       }
     });
@@ -535,7 +552,11 @@ class _HikingScreenState extends State<HikingScreen> {
           position.latitude,
           position.longitude,
         );
-        _totalDistance += distance;
+        if (_isDescending) {
+          _descentDistance += distance;
+        } else {
+          _totalDistance += distance;
+        }
       }
 
       // 고도 추적
@@ -547,10 +568,18 @@ class _HikingScreenState extends State<HikingScreen> {
           final altDiff = altitude - _lastAltitude;
           // 노이즈 필터링: 2m 이상 차이만 반영
           if (altDiff.abs() > 2) {
-            if (altDiff > 0) {
-              _elevationGain += altDiff;
+            if (_isDescending) {
+              if (altDiff > 0) {
+                _descentElevationGain += altDiff;
+              } else {
+                _descentElevationLoss += altDiff.abs();
+              }
             } else {
-              _elevationLoss += altDiff.abs();
+              if (altDiff > 0) {
+                _elevationGain += altDiff;
+              } else {
+                _elevationLoss += altDiff.abs();
+              }
             }
           }
         }
@@ -581,8 +610,56 @@ class _HikingScreenState extends State<HikingScreen> {
       LatLng(position.latitude, position.longitude),
     );
 
-    // 정상 도착 확인
-    _checkSummitArrival(position);
+    // 정상 도착 확인 (등산 중일 때만)
+    if (!_isDescending) {
+      _checkSummitArrival(position);
+    } else {
+      // 하산 중 입구 근처 도착 감지
+      _checkStartPointArrival(position);
+    }
+  }
+
+  void _checkStartPointArrival(Position position) {
+    if (_descentDialogShown) return;
+    if (widget.oreum.startLat == null || widget.oreum.startLng == null) return;
+
+    final distanceToStart = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      widget.oreum.startLat!,
+      widget.oreum.startLng!,
+    );
+
+    if (distanceToStart <= 100) {
+      _descentDialogShown = true;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.home, color: AppColors.primary),
+              SizedBox(width: 8),
+              Text('입구 도착!'),
+            ],
+          ),
+          content: const Text('출발점 근처에 도착했습니다.\n하산을 완료하시겠습니까?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('계속 이동'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _completeHiking();
+              },
+              child: const Text('하산 완료'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   void _checkSummitArrival(Position position) {
@@ -602,8 +679,9 @@ class _HikingScreenState extends State<HikingScreen> {
       });
     }
 
-    // 50m 이내면 완료 다이얼로그 표시
-    if (distanceToSummit <= 50 && !_isCompleted) {
+    // 50m 이내면 완료 다이얼로그 표시 (1회만)
+    if (distanceToSummit <= 50 && !_isCompleted && !_summitDialogShown) {
+      _summitDialogShown = true;
       _showSummitDialog();
     }
   }
@@ -620,7 +698,7 @@ class _HikingScreenState extends State<HikingScreen> {
             Text('정상 도착!'),
           ],
         ),
-        content: Text('${widget.oreum.name} 정상에 도착했습니다!\n등반을 완료하시겠습니까?'),
+        content: Text('${widget.oreum.name} 정상에 도착했습니다!\n하산을 시작하시겠습니까?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -629,13 +707,44 @@ class _HikingScreenState extends State<HikingScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
+              _startDescent();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+            ),
+            child: const Text('하산 시작'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
               _completeHiking();
             },
-            child: const Text('완료'),
+            child: const Text('여기서 완료'),
           ),
         ],
       ),
     );
+  }
+
+  void _startDescent() {
+    final pedometer = context.read<PedometerService>();
+    setState(() {
+      // 등산 데이터 스냅샷 저장
+      _ascentDistance = _totalDistance;
+      _ascentSeconds = _elapsedSeconds;
+      _ascentSteps = _hikingSteps;
+
+      // 하산 모드 전환
+      _isDescending = true;
+      _descentDistance = 0;
+      _descentSeconds = 0;
+      _descentSteps = 0;
+      _descentStartSteps = pedometer.todaySteps;
+      _descentElevationGain = 0;
+      _descentElevationLoss = 0;
+      _descentCalories = 0;
+      _descentDialogShown = false;
+    });
   }
 
   void _pauseHiking() {
@@ -653,6 +762,8 @@ class _HikingScreenState extends State<HikingScreen> {
   }
 
   Future<void> _completeHiking() async {
+    if (_isCompleted) return;
+
     _timer?.cancel();
     _mapService.stopTracking();
 
@@ -664,21 +775,37 @@ class _HikingScreenState extends State<HikingScreen> {
       _isCompleted = true;
     });
 
-    // 평균 속도 계산
-    final avgSpeed = _elapsedSeconds > 0
-        ? (_totalDistance / 1000) / (_elapsedSeconds / 3600)
+    // 하산 중이었다면 등산 데이터는 스냅샷 사용
+    final ascentDist = _isDescending ? _ascentDistance : _totalDistance;
+    final ascentSecs = _isDescending ? _ascentSeconds : _elapsedSeconds;
+    final ascentSteps = _isDescending ? _ascentSteps : _hikingSteps;
+
+    // 평균 속도 계산 (등산 구간)
+    final avgSpeed = ascentSecs > 0
+        ? (ascentDist / 1000) / (ascentSecs / 3600)
         : 0.0;
 
     // 칼로리 계산
     final authProvider = context.read<AuthProvider>();
     final userWeight = authProvider.weight ?? 70.0;
     _calculatedCalories = CalorieCalculator.calculateHikingCalories(
-      distanceKm: _totalDistance / 1000,
-      durationMinutes: _elapsedSeconds ~/ 60,
+      distanceKm: ascentDist / 1000,
+      durationMinutes: ascentSecs ~/ 60,
       elevationGainM: _elevationGain,
       elevationLossM: _elevationLoss,
       weightKg: userWeight,
     );
+
+    // 하산 칼로리 계산
+    if (_isDescending && _descentDistance > 0) {
+      _descentCalories = CalorieCalculator.calculateHikingCalories(
+        distanceKm: _descentDistance / 1000,
+        durationMinutes: _descentSeconds ~/ 60,
+        elevationGainM: _descentElevationGain,
+        elevationLossM: _descentElevationLoss,
+        weightKg: userWeight,
+      );
+    }
 
     // 사진 업로드
     List<String> photoUrls = [];
@@ -702,15 +829,19 @@ class _HikingScreenState extends State<HikingScreen> {
       try {
         final logId = await _stampService.recordHikingLog(
           oreumId: widget.oreum.id,
-          distanceWalked: _totalDistance,
-          timeTaken: _elapsedSeconds ~/ 60,
-          steps: _hikingSteps,
+          distanceWalked: ascentDist,
+          timeTaken: ascentSecs ~/ 60,
+          steps: ascentSteps,
           avgSpeed: avgSpeed,
           calories: _calculatedCalories,
           elevationGain: _elevationGain,
           elevationLoss: _elevationLoss,
           maxAltitude: _maxAltitude > 0 ? _maxAltitude : null,
           minAltitude: _minAltitude < double.infinity ? _minAltitude : null,
+          descentDistance: _isDescending ? _descentDistance : null,
+          descentTime: _isDescending ? _descentSeconds ~/ 60 : null,
+          descentSteps: _isDescending ? _descentSteps : null,
+          descentCalories: _isDescending ? _descentCalories : null,
         );
 
         // GPS 경로 저장 (미완등 시에도 저장)
@@ -740,15 +871,19 @@ class _HikingScreenState extends State<HikingScreen> {
     try {
       final stampId = await _stampService.recordStamp(
         oreumId: widget.oreum.id,
-        distanceWalked: _totalDistance,
-        timeTaken: _elapsedSeconds ~/ 60,
-        steps: _hikingSteps,
+        distanceWalked: ascentDist,
+        timeTaken: ascentSecs ~/ 60,
+        steps: ascentSteps,
         avgSpeed: avgSpeed,
         calories: _calculatedCalories,
         elevationGain: _elevationGain,
         elevationLoss: _elevationLoss,
         maxAltitude: _maxAltitude > 0 ? _maxAltitude : null,
         minAltitude: _minAltitude < double.infinity ? _minAltitude : null,
+        descentDistance: _isDescending ? _descentDistance : null,
+        descentTime: _isDescending ? _descentSeconds ~/ 60 : null,
+        descentSteps: _isDescending ? _descentSteps : null,
+        descentCalories: _isDescending ? _descentCalories : null,
       );
 
       // GPS 경로 저장
@@ -778,11 +913,14 @@ class _HikingScreenState extends State<HikingScreen> {
   }
 
   void _showIncompleteDialog() {
+    final ascentDist = _isDescending ? _ascentDistance : _totalDistance;
+    final ascentSecs = _isDescending ? _ascentSeconds : _elapsedSeconds;
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('등반 종료'),
+        title: Text(_isDescending ? '하산 종료' : '등반 종료'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -799,8 +937,16 @@ class _HikingScreenState extends State<HikingScreen> {
                 style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 16),
-              _buildStatRow('이동 거리', '${(_totalDistance / 1000).toStringAsFixed(2)} km'),
-              _buildStatRow('소요 시간', _formatDuration(_elapsedSeconds)),
+              _buildStatRow('등산 거리', '${(ascentDist / 1000).toStringAsFixed(2)} km'),
+              _buildStatRow('등산 시간', _formatDuration(ascentSecs)),
+              if (_isDescending && _descentDistance > 0) ...[
+                const Divider(),
+                _buildStatRow('하산 거리', '${(_descentDistance / 1000).toStringAsFixed(2)} km'),
+                _buildStatRow('하산 시간', _formatDuration(_descentSeconds)),
+                const Divider(),
+                _buildStatRow('총 거리', '${((ascentDist + _descentDistance) / 1000).toStringAsFixed(2)} km'),
+                _buildStatRow('총 시간', _formatDuration(_elapsedSeconds)),
+              ],
             ],
           ),
         ),
@@ -818,11 +964,15 @@ class _HikingScreenState extends State<HikingScreen> {
   }
 
   void _showCompletionDialog() {
+    final ascentDist = _isDescending ? _ascentDistance : _totalDistance;
+    final ascentSecs = _isDescending ? _ascentSeconds : _elapsedSeconds;
+    final ascentStepsVal = _isDescending ? _ascentSteps : _hikingSteps;
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('등반 완료!'),
+        title: Text(_isDescending ? '등반+하산 완료!' : '등반 완료!'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -841,12 +991,38 @@ class _HikingScreenState extends State<HikingScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              _buildStatRow('걸음수', '${_formatNumber(_hikingSteps)} 보'),
-              _buildStatRow('이동 거리', '${(_totalDistance / 1000).toStringAsFixed(2)} km'),
-              _buildStatRow('소요 시간', _formatDuration(_elapsedSeconds)),
-              _buildStatRow('평균 속도', _elapsedSeconds > 0
-                  ? '${((_totalDistance / 1000) / (_elapsedSeconds / 3600)).toStringAsFixed(1)} km/h'
-                  : '0.0 km/h'),
+              // 등산 통계
+              if (_isDescending) ...[
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('등산', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary)),
+                ),
+                const SizedBox(height: 4),
+              ],
+              _buildStatRow('걸음수', '${_formatNumber(ascentStepsVal)} 보'),
+              _buildStatRow('이동 거리', '${(ascentDist / 1000).toStringAsFixed(2)} km'),
+              _buildStatRow('소요 시간', _formatDuration(ascentSecs)),
+              // 하산 통계
+              if (_isDescending && _descentDistance > 0) ...[
+                const SizedBox(height: 12),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('하산', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
+                ),
+                const SizedBox(height: 4),
+                _buildStatRow('걸음수', '${_formatNumber(_descentSteps)} 보'),
+                _buildStatRow('이동 거리', '${(_descentDistance / 1000).toStringAsFixed(2)} km'),
+                _buildStatRow('소요 시간', _formatDuration(_descentSeconds)),
+                const SizedBox(height: 12),
+                const Divider(),
+                _buildStatRow('총 거리', '${((ascentDist + _descentDistance) / 1000).toStringAsFixed(2)} km'),
+                _buildStatRow('총 시간', _formatDuration(_elapsedSeconds)),
+                _buildStatRow('총 걸음수', '${_formatNumber(ascentStepsVal + _descentSteps)} 보'),
+              ] else ...[
+                _buildStatRow('평균 속도', ascentSecs > 0
+                    ? '${((ascentDist / 1000) / (ascentSecs / 3600)).toStringAsFixed(1)} km/h'
+                    : '0.0 km/h'),
+              ],
               const SizedBox(height: 8),
               const Text(
                 '스탬프가 저장되었습니다!',
@@ -1391,8 +1567,10 @@ class _HikingScreenState extends State<HikingScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('등반 중단'),
-        content: const Text('등반을 중단하시겠습니까?\n현재까지의 기록이 저장됩니다.'),
+        title: Text(_isDescending ? '하산 중단' : '등반 중단'),
+        content: Text(_isDescending
+            ? '하산을 중단하시겠습니까?\n현재까지의 기록이 저장됩니다.'
+            : '등반을 중단하시겠습니까?\n현재까지의 기록이 저장됩니다.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -1542,24 +1720,47 @@ class _HikingScreenState extends State<HikingScreen> {
                         ),
                         if (_isHiking)
                           Text(
-                            _isPaused ? '일시정지' : '등반 중',
+                            _isPaused ? '일시정지' : (_isDescending ? '하산 중' : '등반 중'),
                             style: TextStyle(
                               fontSize: 12,
-                              color: _isPaused ? Colors.orange : AppColors.primary,
+                              color: _isPaused ? Colors.orange : (_isDescending ? Colors.orange : AppColors.primary),
                             ),
                           ),
                       ],
                     ),
                   ),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => OreumErrorReportScreen(
+                            oreum: widget.oreum,
+                            initialLatitude: _currentPosition?.latitude,
+                            initialLongitude: _currentPosition?.longitude,
+                          ),
+                        ),
+                      );
+                    },
+                    child: Tooltip(
+                      message: '정보 오류 신고',
+                      child: Icon(
+                        Icons.report_problem_outlined,
+                        color: AppColors.textSecondary,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   if (_isHiking)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: _isPaused ? Colors.orange : AppColors.primary,
+                        color: _isPaused ? Colors.orange : (_isDescending ? Colors.orange : AppColors.primary),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        _formatDuration(_elapsedSeconds),
+                        _isDescending ? _formatDuration(_descentSeconds) : _formatDuration(_elapsedSeconds),
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -1572,30 +1773,53 @@ class _HikingScreenState extends State<HikingScreen> {
                 const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _buildStatItem(
-                      Icons.directions_walk,
-                      _formatNumber(_hikingSteps),
-                      '걸음수',
-                    ),
-                    _buildStatItem(
-                      Icons.straighten,
-                      '${(_totalDistance / 1000).toStringAsFixed(2)} km',
-                      '이동 거리',
-                    ),
-                    _buildStatItem(
-                      Icons.flag,
-                      _distanceToSummit > 1000
-                          ? '${(_distanceToSummit / 1000).toStringAsFixed(1)}km'
-                          : '${_distanceToSummit.toInt()}m',
-                      '남은 거리',
-                    ),
-                    _buildStatItem(
-                      Icons.schedule,
-                      _getEstimatedRemainingTime(),
-                      '남은 시간',
-                    ),
-                  ],
+                  children: _isDescending
+                      ? [
+                          _buildStatItem(
+                            Icons.directions_walk,
+                            _formatNumber(_descentSteps),
+                            '하산 걸음수',
+                          ),
+                          _buildStatItem(
+                            Icons.straighten,
+                            '${(_descentDistance / 1000).toStringAsFixed(2)} km',
+                            '하산 거리',
+                          ),
+                          _buildStatItem(
+                            Icons.schedule,
+                            _formatDuration(_descentSeconds),
+                            '하산 시간',
+                          ),
+                          _buildStatItem(
+                            Icons.terrain,
+                            '${((_ascentDistance + _descentDistance) / 1000).toStringAsFixed(2)} km',
+                            '총 거리',
+                          ),
+                        ]
+                      : [
+                          _buildStatItem(
+                            Icons.directions_walk,
+                            _formatNumber(_hikingSteps),
+                            '걸음수',
+                          ),
+                          _buildStatItem(
+                            Icons.straighten,
+                            '${(_totalDistance / 1000).toStringAsFixed(2)} km',
+                            '이동 거리',
+                          ),
+                          _buildStatItem(
+                            Icons.flag,
+                            _distanceToSummit > 1000
+                                ? '${(_distanceToSummit / 1000).toStringAsFixed(1)}km'
+                                : '${_distanceToSummit.toInt()}m',
+                            '남은 거리',
+                          ),
+                          _buildStatItem(
+                            Icons.schedule,
+                            _getEstimatedRemainingTime(),
+                            '남은 시간',
+                          ),
+                        ],
                 ),
               ],
             ],
@@ -1945,7 +2169,7 @@ class _HikingScreenState extends State<HikingScreen> {
               child: ElevatedButton.icon(
                 onPressed: _completeHiking,
                 icon: const Icon(Icons.flag),
-                label: const Text('완료'),
+                label: Text(_isDescending ? '하산 완료' : '완료'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.secondary,
                   padding: const EdgeInsets.symmetric(vertical: 14),

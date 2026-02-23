@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../theme/app_colors.dart';
 import '../../models/oreum_model.dart';
 import '../../providers/stamp_provider.dart';
@@ -12,9 +13,10 @@ import '../../services/review_service.dart';
 import '../../services/blog_service.dart';
 import '../../services/map_service.dart';
 import '../../services/oreum_service.dart';
-import '../../models/oreum_image_model.dart';
+import '../../services/stamp_service.dart';
 import '../hiking/hiking_screen.dart';
 import '../map/map_screen.dart';
+import 'oreum_error_report_screen.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 
@@ -32,12 +34,18 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   final ReviewService _reviewService = ReviewService();
   final BlogService _blogService = BlogService();
   final OreumService _oreumService = OreumService();
+  final StampService _stampService = StampService();
   List<Map<String, dynamic>> _reviews = [];
   bool _isLoadingReviews = true;
   List<BlogPost> _blogPosts = [];
   bool _isLoadingBlogs = true;
-  List<OreumImageModel> _galleryImages = [];
+  List<String> _officialImages = [];
+  List<String> _communityImages = [];
+  String? _gallerySource;
   bool _isLoadingGallery = true;
+  bool _isUploadingImage = false;
+  List<Map<String, dynamic>> _stampUsers = [];
+  bool _isLoadingStampUsers = true;
 
   @override
   void initState() {
@@ -45,20 +53,104 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     _loadReviews();
     _loadBlogPosts();
     _loadGalleryImages();
+    _loadStampUsers();
   }
 
   Future<void> _loadGalleryImages() async {
     try {
-      final images = await _oreumService.getGalleryImages(oreum.id);
+      final result = await _oreumService.getGalleryImagesWithSource(oreum.id);
+      String? source;
+      try {
+        source = await _oreumService.getGallerySource(oreum.id);
+      } catch (_) {
+        // 출처 조회 실패해도 무시
+      }
       if (mounted) {
         setState(() {
-          _galleryImages = images;
+          _officialImages = result['official'] ?? [];
+          _communityImages = result['community'] ?? [];
+          _gallerySource = source;
           _isLoadingGallery = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoadingGallery = false);
+      }
+    }
+  }
+
+  Future<void> _loadStampUsers() async {
+    try {
+      final users = await _stampService.getOreumStampUsers(oreum.id);
+      if (mounted) {
+        setState(() {
+          _stampUsers = users;
+          _isLoadingStampUsers = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingStampUsers = false);
+      }
+    }
+  }
+
+  List<String> get _allGalleryImages => [..._communityImages, ..._officialImages];  // 최신(커뮤니티) 먼저
+
+  Future<void> _uploadGalleryImage() async {
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isLoggedIn) {
+      _showLoginRequiredDialog();
+      return;
+    }
+
+    final picker = ImagePicker();
+    final pickedFiles = await picker.pickMultiImage(
+      maxWidth: 1024,  // 최대 1024px
+      maxHeight: 1024,
+      imageQuality: 60,  // 60% 품질 (용량 절약)
+    );
+
+    if (pickedFiles.isEmpty) return;
+
+    setState(() => _isUploadingImage = true);
+
+    try {
+      int successCount = 0;
+      int failCount = 0;
+
+      for (final file in pickedFiles) {
+        try {
+          await _oreumService.uploadGalleryImage(oreum.id, file.path);
+          successCount++;
+        } catch (e) {
+          failCount++;
+          debugPrint('이미지 업로드 실패: $e');
+        }
+      }
+
+      if (mounted) {
+        if (failCount == 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$successCount장의 사진이 업로드되었습니다')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$successCount장 성공, $failCount장 실패')),
+          );
+        }
+        _loadGalleryImages(); // 갤러리 새로고침
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('업로드 실패: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingImage = false);
       }
     }
   }
@@ -108,16 +200,16 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 // 출입 제한 경고 배너
                 if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
                   _buildRestrictionBanner(),
-                _buildOreumImage(),
                 // 갤러리 섹션
-                if (_galleryImages.isNotEmpty) _buildGallerySection(),
+                _buildGallerySection(),
                 _buildOreumInfoList(),
-                // 등산로 보기 버튼
-                _buildTrailViewButton(),
                 if (oreum.elevationUrl != null) ...[
                   const SizedBox(height: 16),
                   _buildElevationGraphSection(),
                 ],
+                const Divider(height: 32),
+                // 인증자 순위 섹션
+                _buildStampUsersSection(),
                 const Divider(height: 32),
                 // 블로그 섹션
                 _buildBlogSection(),
@@ -169,6 +261,23 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
           },
         ),
         IconButton(
+          icon: const Icon(Icons.report_problem_outlined),
+          tooltip: '정보 오류 신고',
+          onPressed: () {
+            final authProvider = context.read<AuthProvider>();
+            if (!authProvider.isLoggedIn) {
+              _showLoginRequiredDialog();
+              return;
+            }
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => OreumErrorReportScreen(oreum: oreum),
+              ),
+            );
+          },
+        ),
+        IconButton(
           icon: const Icon(Icons.share),
           onPressed: () => _shareOreum(),
         ),
@@ -201,8 +310,11 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
             _buildInfoRowWithIcon(Icons.local_parking, '주차', oreum.parking!, Colors.indigo),
           if (oreum.restroom != null && oreum.restroom!.isNotEmpty)
             _buildInfoRowWithIcon(Icons.wc, '화장실', oreum.restroom!, Colors.purple),
+          _buildTrailStatusRow(),
           if (oreum.recommendedSeason != null && oreum.recommendedSeason!.isNotEmpty)
             _buildInfoRowWithIcon(Icons.calendar_month, '추천시기', oreum.recommendedSeason!, Colors.pink),
+          if (oreum.visitTip != null && oreum.visitTip!.isNotEmpty)
+            _buildInfoRowWithIcon(Icons.lightbulb_outline, '방문팁', oreum.visitTip!, Colors.amber),
           if (oreum.origin != null && oreum.origin!.isNotEmpty)
             _buildInfoRowWithIcon(Icons.history_edu, '이름유래', oreum.origin!, Colors.blueGrey),
           if (oreum.features != null && oreum.features!.isNotEmpty)
@@ -221,6 +333,241 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildStampUsersSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.emoji_events, size: 20, color: Colors.amber),
+              const SizedBox(width: 8),
+              const Text(
+                '인증 순위',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 8),
+              if (!_isLoadingStampUsers)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${_stampUsers.length}명',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_isLoadingStampUsers)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (_stampUsers.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Center(
+                child: Column(
+                  children: [
+                    Icon(Icons.hiking, size: 40, color: AppColors.textHint),
+                    SizedBox(height: 8),
+                    Text('아직 인증한 사람이 없습니다', style: TextStyle(color: AppColors.textSecondary)),
+                  ],
+                ),
+              ),
+            )
+          else
+            ...List.generate(
+              _stampUsers.length,
+              (index) => _buildStampUserRow(index, _stampUsers[index]),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStampUserRow(int index, Map<String, dynamic> stampUser) {
+    final rank = index + 1;
+    final user = stampUser['users'] as Map<String, dynamic>?;
+    final nickname = user?['nickname'] ?? '익명';
+    final profileImage = user?['profile_image'] as String?;
+    final completedAt = DateTime.tryParse(stampUser['completed_at'] ?? '');
+    final dateStr = completedAt != null
+        ? '${completedAt.year}.${completedAt.month.toString().padLeft(2, '0')}.${completedAt.day.toString().padLeft(2, '0')}'
+        : '';
+
+    // 순위별 색상
+    Color rankColor;
+    IconData? rankIcon;
+    switch (rank) {
+      case 1:
+        rankColor = const Color(0xFFFFD700); // 금
+        rankIcon = Icons.emoji_events;
+        break;
+      case 2:
+        rankColor = const Color(0xFFC0C0C0); // 은
+        rankIcon = Icons.emoji_events;
+        break;
+      case 3:
+        rankColor = const Color(0xFFCD7F32); // 동
+        rankIcon = Icons.emoji_events;
+        break;
+      default:
+        rankColor = AppColors.textSecondary;
+        rankIcon = null;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: rank <= 3 ? rankColor.withOpacity(0.05) : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: rank <= 3 ? rankColor.withOpacity(0.3) : AppColors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          // 순위
+          SizedBox(
+            width: 32,
+            child: rankIcon != null
+                ? Icon(rankIcon, size: 22, color: rankColor)
+                : Text(
+                    '$rank',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: rankColor,
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 10),
+          // 프로필
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: AppColors.surface,
+            backgroundImage: profileImage != null ? NetworkImage(profileImage) : null,
+            child: profileImage == null
+                ? const Icon(Icons.person, size: 18, color: AppColors.textSecondary)
+                : null,
+          ),
+          const SizedBox(width: 10),
+          // 닉네임
+          Expanded(
+            child: Text(
+              nickname,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          // 인증 날짜
+          Text(
+            dateStr,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textHint,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrailStatusRow() {
+    final isVerified = (oreum.trailStatus ?? 'checking') == 'verified';
+    final color = isVerified ? Colors.green : Colors.orange;
+    final statusLabel = isVerified ? '확인됨' : '미확인';
+
+    String dateStr = '';
+    if (isVerified && oreum.trailVerifiedAt != null) {
+      final d = oreum.trailVerifiedAt!;
+      dateStr = ' (${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')})';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.verified_user, size: 18, color: color),
+          const SizedBox(width: 8),
+          const SizedBox(
+            width: 60,
+            child: Text(
+              '인증여부',
+              style: TextStyle(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              '$statusLabel$dateStr',
+              style: TextStyle(
+                fontSize: 13,
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          // 확인 버튼은 숨김 (등반 완료 시 자동 처리)
+        ],
+      ),
+    );
+  }
+
+  Future<void> _manualVerifyTrailStatus() async {
+    try {
+      // 등산로 현황을 '확인됨'으로 변경
+      await _oreumService.updateTrailStatus(oreum.id, 'verified');
+
+      // 스탬프(인증) 기록도 저장 → 인증된 오름 + 인증순위 반영
+      final stampProvider = context.read<StampProvider>();
+      if (!stampProvider.hasStamp(oreum.id)) {
+        await stampProvider.verifyAndStampManual(oreum);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('등산로 확인 완료')),
+        );
+        setState(() {});
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('변경 실패: $e')),
+        );
+      }
+    }
   }
 
   Widget _buildInfoRowWithIcon(IconData icon, String label, String value, Color color) {
@@ -852,22 +1199,42 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
+          SizedBox(
+            width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => _openNavigation(context),
-              icon: const Icon(Icons.navigation),
-              label: const Text('길안내'),
+              onPressed: () => _navigateToMapWithTrail(),
+              icon: const Icon(Icons.map_outlined),
+              label: const Text('등산로 보기'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: () => _startHikingWithDistanceCheck(),
-              icon: const Icon(Icons.hiking),
-              label: const Text('등반 시작'),
-            ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _openNavigation(context),
+                  icon: const Icon(Icons.navigation),
+                  label: const Text('길안내'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _navigateToHiking(),
+                  icon: const Icon(Icons.hiking),
+                  label: const Text('등반 시작'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -980,6 +1347,11 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   }
 
   void _navigateToHiking() {
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isLoggedIn) {
+      _showLoginRequiredDialog();
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1001,68 +1373,6 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     }
   }
 
-  Widget _buildOreumImage() {
-    // aerialImageUrl 우선, 없으면 imageUrl 사용
-    final displayImageUrl = oreum.aerialImageUrl ?? oreum.imageUrl;
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          AspectRatio(
-            aspectRatio: 2 / 1,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                color: Colors.white,
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: displayImageUrl != null
-                  ? Image.network(
-                      displayImageUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: AppColors.surface,
-                        child: const Center(
-                          child: Icon(Icons.terrain, size: 48, color: AppColors.textHint),
-                        ),
-                      ),
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Container(
-                          color: AppColors.surface,
-                          child: const Center(
-                            child: CircularProgressIndicator(),
-                          ),
-                        );
-                      },
-                    )
-                  : Container(
-                      color: AppColors.surface,
-                      child: const Center(
-                        child: Icon(Icons.terrain, size: 48, color: AppColors.textHint),
-                      ),
-                    ),
-            ),
-          ),
-          // 사진 출처 표시
-          if (oreum.imageSource != null && oreum.imageSource!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4, right: 4),
-              child: Text(
-                '출처: ${oreum.imageSource}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textHint,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildGallerySection() {
     if (_isLoadingGallery) {
       return const Padding(
@@ -1071,73 +1381,148 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
       );
     }
 
-    if (_galleryImages.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    final imageSource = _galleryImages.first.imageSource;
+    final allImages = _allGalleryImages;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 갤러리 헤더 (사진 추가 버튼 포함)
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Icon(Icons.photo_library, size: 20, color: AppColors.primary),
-              const SizedBox(width: 8),
-              Text(
-                '갤러리 (${_galleryImages.length})',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
+              Row(
+                children: [
+                  const Icon(Icons.photo_library, size: 20, color: AppColors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    '갤러리 (${allImages.length})',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
+              _isUploadingImage
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : IconButton(
+                      onPressed: _uploadGalleryImage,
+                      icon: const Icon(Icons.add_photo_alternate),
+                      tooltip: '사진 추가',
+                    ),
             ],
           ),
         ),
-        SizedBox(
-          height: 120,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: _galleryImages.length,
-            itemBuilder: (context, index) {
-              final image = _galleryImages[index];
-              return GestureDetector(
-                onTap: () => _openGalleryViewer(index),
-                child: Container(
-                  width: 160,
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    color: AppColors.surface,
+        if (allImages.isEmpty)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Center(
+              child: Column(
+                children: [
+                  const Icon(Icons.photo_library_outlined, size: 48, color: AppColors.textHint),
+                  const SizedBox(height: 8),
+                  const Text('아직 등록된 사진이 없습니다', style: TextStyle(color: AppColors.textSecondary)),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _uploadGalleryImage,
+                    icon: const Icon(Icons.add_photo_alternate, size: 18),
+                    label: const Text('첫 번째 사진 올리기'),
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Image.network(
-                    image.imageUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => const Center(
-                      child: Icon(Icons.broken_image, color: AppColors.textHint),
+                ],
+              ),
+            ),
+          )
+        else
+          SizedBox(
+            height: 240,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: allImages.length,
+              itemBuilder: (context, index) {
+                final imageUrl = allImages[index];
+                final isCommunity = index < _communityImages.length;  // 커뮤니티가 앞에 있음
+                return GestureDetector(
+                  onTap: () => _openGalleryViewer(index),
+                  child: Container(
+                    width: 320,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.white,
                     ),
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
-                    },
+                    clipBehavior: Clip.antiAlias,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.network(
+                          imageUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => const Center(
+                            child: Icon(Icons.broken_image, color: AppColors.textHint),
+                          ),
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                          },
+                        ),
+                        // 커뮤니티 사진 표시
+                        if (isCommunity)
+                          Positioned(
+                            top: 8,
+                            left: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.people, size: 14, color: Colors.white),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    '커뮤니티',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
-        if (imageSource != null && imageSource.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: Text(
-              '출처: $imageSource',
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppColors.textHint,
+        if (_gallerySource != null && _officialImages.isNotEmpty)
+          Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Text(
+                '공식 사진 출처: $_gallerySource',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textHint,
+                ),
               ),
             ),
           ),
@@ -1150,8 +1535,12 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
       context,
       MaterialPageRoute(
         builder: (context) => GalleryViewerScreen(
-          images: _galleryImages,
+          images: _allGalleryImages,
           initialIndex: initialIndex,
+          communityCount: _communityImages.length,  // 커뮤니티가 앞에 있음
+          onImageDeleted: () {
+            _loadGalleryImages(); // 삭제 후 갤러리 새로고침
+          },
         ),
       ),
     );
@@ -1889,13 +2278,17 @@ ${oreum.description ?? '제주의 아름다운 오름을 만나보세요!'}
 
 // 갤러리 전체화면 뷰어
 class GalleryViewerScreen extends StatefulWidget {
-  final List<OreumImageModel> images;
+  final List<String> images;
   final int initialIndex;
+  final int communityCount; // 커뮤니티 이미지 개수 (앞에 있음)
+  final VoidCallback? onImageDeleted;
 
   const GalleryViewerScreen({
     super.key,
     required this.images,
     required this.initialIndex,
+    this.communityCount = 0,
+    this.onImageDeleted,
   });
 
   @override
@@ -1905,6 +2298,7 @@ class GalleryViewerScreen extends StatefulWidget {
 class _GalleryViewerScreenState extends State<GalleryViewerScreen> {
   late int _currentIndex;
   late PageController _pageController;
+  final OreumService _oreumService = OreumService();
 
   @override
   void initState() {
@@ -1919,6 +2313,163 @@ class _GalleryViewerScreenState extends State<GalleryViewerScreen> {
     super.dispose();
   }
 
+  bool get _isCurrentCommunityImage => _currentIndex < widget.communityCount;  // 커뮤니티가 앞에 있음
+
+  Future<void> _showOptions() async {
+    if (!_isCurrentCommunityImage) return; // 공식 이미지는 옵션 없음
+
+    final imageUrl = widget.images[_currentIndex];
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final currentUserId = authProvider.user?.id;
+
+    // 이미지 소유자 정보 확인
+    final postInfo = await _oreumService.getImagePostInfo(imageUrl);
+    final isOwner = postInfo != null && postInfo['user_id'] == currentUserId;
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (isOwner)
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text('내 사진 삭제', style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _confirmDelete(imageUrl);
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.flag_outlined, color: Colors.orange),
+              title: const Text('부적절한 사진 신고'),
+              onTap: () {
+                Navigator.pop(context);
+                _showReportDialog(imageUrl);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(String imageUrl) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('사진 삭제'),
+        content: const Text('이 사진을 삭제하시겠습니까?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await _oreumService.deleteGalleryImage(imageUrl);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('사진이 삭제되었습니다')),
+          );
+          widget.onImageDeleted?.call();
+          Navigator.pop(context);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('삭제 실패: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _showReportDialog(String imageUrl) async {
+    final reasons = ['부적절한 콘텐츠', '스팸/광고', '저작권 침해', '기타'];
+    String? selectedReason;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('사진 신고'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('신고 사유를 선택해주세요:'),
+              const SizedBox(height: 12),
+              ...reasons.map((reason) => RadioListTile<String>(
+                title: Text(reason),
+                value: reason,
+                groupValue: selectedReason,
+                onChanged: (value) => setState(() => selectedReason = value),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+              )),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소'),
+            ),
+            TextButton(
+              onPressed: selectedReason != null
+                  ? () => Navigator.pop(context, true)
+                  : null,
+              child: const Text('신고'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed == true && selectedReason != null) {
+      try {
+        await _oreumService.reportGalleryImage(imageUrl, selectedReason!);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('신고가 접수되었습니다')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('신고 실패: $e')),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1928,15 +2479,10 @@ class _GalleryViewerScreenState extends State<GalleryViewerScreen> {
         foregroundColor: Colors.white,
         title: Text('${_currentIndex + 1} / ${widget.images.length}'),
         actions: [
-          if (widget.images[_currentIndex].imageSource != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Center(
-                child: Text(
-                  '출처: ${widget.images[_currentIndex].imageSource}',
-                  style: const TextStyle(fontSize: 12, color: Colors.white70),
-                ),
-              ),
+          if (_isCurrentCommunityImage)
+            IconButton(
+              icon: const Icon(Icons.more_vert),
+              onPressed: _showOptions,
             ),
         ],
       ),
@@ -1945,7 +2491,7 @@ class _GalleryViewerScreenState extends State<GalleryViewerScreen> {
         itemCount: widget.images.length,
         builder: (context, index) {
           return PhotoViewGalleryPageOptions(
-            imageProvider: NetworkImage(widget.images[index].imageUrl),
+            imageProvider: NetworkImage(widget.images[index]),
             minScale: PhotoViewComputedScale.contained,
             maxScale: PhotoViewComputedScale.covered * 2,
             errorBuilder: (context, error, stackTrace) => const Center(

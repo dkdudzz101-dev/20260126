@@ -341,16 +341,20 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
             Expanded(
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                child: oreum.stampUrl != null
-                    ? Image.network(
-                        oreum.stampUrl!,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        color: Colors.grey,
-                        colorBlendMode: BlendMode.saturation,
-                        errorBuilder: (_, __, ___) => _buildStampPlaceholder(),
-                      )
-                    : _buildStampPlaceholder(),
+                child: Container(
+                  color: Colors.white,
+                  width: double.infinity,
+                  child: oreum.stampUrl != null
+                      ? Image.network(
+                          oreum.stampUrl!,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          color: Colors.grey,
+                          colorBlendMode: BlendMode.saturation,
+                          errorBuilder: (_, __, ___) => _buildStampPlaceholder(),
+                        )
+                      : _buildStampPlaceholder(),
+                ),
               ),
             ),
             // 오름 이름
@@ -541,12 +545,14 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(7),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // 스탬프 이미지
-                    oreum.stampUrl != null
-                        ? ColorFiltered(
+                child: Container(
+                  color: Colors.white,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // 스탬프 이미지
+                      oreum.stampUrl != null
+                          ? ColorFiltered(
                             colorFilter: hasStamp
                                 ? const ColorFilter.mode(Colors.transparent, BlendMode.multiply)
                                 : const ColorFilter.matrix(<double>[
@@ -596,7 +602,8 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
                           ),
                         ),
                       ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -682,7 +689,7 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
               borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
               child: Container(
                 width: double.infinity,
-                color: AppColors.surface,
+                color: Colors.white,
                 child: stamp.imageUrl != null
                     ? Image.network(
                         stamp.imageUrl!,

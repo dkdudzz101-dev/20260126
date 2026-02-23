@@ -1,7 +1,8 @@
+import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
 import '../config/supabase_config.dart';
 import '../models/oreum_model.dart';
-import '../models/oreum_image_model.dart';
 
 class OreumService {
   final SupabaseClient _client = SupabaseConfig.client;
@@ -119,6 +120,16 @@ class OreumService {
         .toList();
   }
 
+  // 등산로 점검 상태 업데이트
+  Future<void> updateTrailStatus(String oreumId, String status) async {
+    await _client.from('oreums').update({
+      'trail_status': status,
+      'trail_verified_at': status == 'verified'
+          ? DateTime.now().toIso8601String()
+          : null,
+    }).eq('id', oreumId);
+  }
+
   // 오름 데이터 URL 가져오기 (oreum-data 버킷)
   String getOreumDataUrl(String oreumId, String fileName) {
     return _client.storage.from('oreum-data').getPublicUrl('$oreumId/$fileName');
@@ -144,20 +155,216 @@ class OreumService {
     return _client.storage.from('oreum-data').getPublicUrl('$oreumId/gallery/$fileName');
   }
 
-  // 갤러리 이미지 목록 가져오기
-  Future<List<OreumImageModel>> getGalleryImages(String oreumId) async {
+  // 갤러리 이미지 목록 가져오기 (공식 + 커뮤니티) - 병렬 로딩
+  Future<Map<String, List<String>>> getGalleryImagesWithSource(String oreumId) async {
+    // 1. 공식 이미지와 커뮤니티 이미지 병렬로 로딩
+    final results = await Future.wait([
+      _getOfficialImages(oreumId),
+      _getCommunityImages(oreumId),
+    ]);
+
+    final officialImages = results[0];
+    final communityImages = results[1];
+
+    print('Gallery for $oreumId: official=${officialImages.length}, community=${communityImages.length}');
+    return {
+      'official': officialImages,
+      'community': communityImages,
+    };
+  }
+
+  // 공식 이미지 병렬 확인
+  Future<List<String>> _getOfficialImages(String oreumId) async {
+    final List<String> images = [];
+
+    // 1~20번 이미지 URL 생성
+    final urls = List.generate(20, (i) => _client.storage
+        .from('oreum-data')
+        .getPublicUrl('$oreumId/gallery/${i + 1}.jpg'));
+
+    // 병렬로 HEAD 요청
+    final futures = urls.map((url) async {
+      try {
+        final response = await http.head(Uri.parse(url)).timeout(
+          const Duration(seconds: 3),
+        );
+        return response.statusCode == 200 ? url : null;
+      } catch (e) {
+        return null;
+      }
+    });
+
+    final results = await Future.wait(futures);
+
+    // null이 아닌 것만 순서대로 추가
+    for (var url in results) {
+      if (url != null) {
+        images.add(url);
+      }
+    }
+
+    return images;
+  }
+
+  // 커뮤니티 이미지 가져오기
+  Future<List<String>> _getCommunityImages(String oreumId) async {
+    final List<String> images = [];
+    try {
+      final posts = await _client
+          .from('posts')
+          .select('images')
+          .eq('oreum_id', oreumId)
+          .not('images', 'is', null)
+          .order('created_at', ascending: false);  // 최신순 정렬
+
+      for (var post in posts) {
+        final postImages = post['images'];
+        if (postImages != null && postImages is List) {
+          images.addAll(List<String>.from(postImages));
+        }
+      }
+    } catch (e) {
+      print('Community images error: $e');
+    }
+    return images;
+  }
+
+  // 기존 메서드 (호환성 유지)
+  Future<List<String>> getGalleryImages(String oreumId) async {
+    final result = await getGalleryImagesWithSource(oreumId);
+    return [...result['official']!, ...result['community']!];
+  }
+
+  // 사용자 갤러리 이미지 업로드 (posts 버킷 사용 + 커뮤니티 게시글로 등록)
+  Future<String> uploadGalleryImage(String oreumId, String filePath) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('로그인이 필요합니다');
+
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName = 'gallery_${oreumId}_$timestamp.jpg';
+    final storagePath = 'images/$fileName';
+
+    print('Uploading gallery image: $storagePath');
+
+    try {
+      final file = File(filePath);
+      final bytes = await file.readAsBytes();
+      print('File size: ${bytes.length} bytes');
+
+      await _client.storage
+          .from('posts')
+          .uploadBinary(storagePath, bytes, fileOptions: const FileOptions(
+            contentType: 'image/jpeg',
+          ));
+
+      final url = _client.storage.from('posts').getPublicUrl(storagePath);
+      print('Upload success: $url');
+
+      // 커뮤니티 게시글로 자동 등록 (갤러리 사진)
+      await _client.from('posts').insert({
+        'user_id': userId,
+        'oreum_id': oreumId,
+        'content': '📷 갤러리 사진',
+        'category': 'gallery',
+        'images': [url],
+      });
+
+      return url;
+    } catch (e) {
+      print('Upload error: $e');
+      rethrow;
+    }
+  }
+
+  // 갤러리 사진 삭제 (본인 사진만)
+  Future<void> deleteGalleryImage(String imageUrl) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('로그인이 필요합니다');
+
+    // 해당 이미지가 포함된 게시글 찾기
+    final posts = await _client
+        .from('posts')
+        .select('id, user_id, images')
+        .eq('user_id', userId)
+        .eq('category', 'gallery')
+        .contains('images', [imageUrl]);
+
+    if ((posts as List).isEmpty) {
+      throw Exception('삭제할 수 없는 사진입니다');
+    }
+
+    final post = posts.first;
+
+    // 게시글 삭제
+    await _client.from('posts').delete().eq('id', post['id']);
+
+    // Storage에서 파일 삭제 시도
+    try {
+      final uri = Uri.parse(imageUrl);
+      final pathSegments = uri.pathSegments;
+      final storagePath = pathSegments.sublist(pathSegments.indexOf('posts') + 1).join('/');
+      await _client.storage.from('posts').remove([storagePath]);
+    } catch (e) {
+      print('Storage delete error (ignored): $e');
+    }
+  }
+
+  // 갤러리 사진 신고
+  Future<void> reportGalleryImage(String imageUrl, String reason) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('로그인이 필요합니다');
+
+    try {
+      await _client.from('reports').insert({
+        'reporter_id': userId,
+        'content_type': 'gallery_image',
+        'content_url': imageUrl,
+        'reason': reason,
+      });
+    } catch (e) {
+      // reports 테이블이 없으면 posts에 신고 내용 저장
+      print('Reports table error, using alternative: $e');
+      await _client.from('posts').insert({
+        'user_id': userId,
+        'content': '🚨 신고: $reason\n이미지: $imageUrl',
+        'category': 'report',
+      });
+    }
+  }
+
+  // 커뮤니티 이미지 상세 정보 (삭제/신고용)
+  Future<Map<String, dynamic>?> getImagePostInfo(String imageUrl) async {
+    try {
+      final posts = await _client
+          .from('posts')
+          .select('id, user_id, oreum_id')
+          .contains('images', [imageUrl])
+          .limit(1);
+
+      if ((posts as List).isNotEmpty) {
+        return posts.first;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 갤러리 출처 가져오기
+  Future<String?> getGallerySource(String oreumId) async {
     try {
       final response = await _client
           .from('oreum_images')
-          .select()
+          .select('image_source')
           .eq('oreum_id', oreumId)
-          .order('sort_order');
+          .limit(1);
 
-      return (response as List)
-          .map((json) => OreumImageModel.fromJson(json))
-          .toList();
+      if ((response as List).isNotEmpty && response[0]['image_source'] != null) {
+        return response[0]['image_source'] as String;
+      }
+      return null;
     } catch (e) {
-      return [];
+      return null;
     }
   }
 }

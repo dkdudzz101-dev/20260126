@@ -10,10 +10,8 @@ class OreumModel {
   final int? timeDown;
   final String? surface;
   final String? description;
-  final String? _imageUrl;
   final String? _stampUrl;
   final String? _elevationUrl;
-  final String? _aerialImageUrl;
   final double? startLat;
   final double? startLng;
   final double? summitLat;
@@ -35,6 +33,9 @@ class OreumModel {
   final String? features;
   final String? recommendedSeason;
   final String? imageSource; // 사진 출처
+  final String? visitTip; // 방문팁
+  final String? trailStatus; // 'verified' (확인됨) / 'checking' (미확인)
+  final DateTime? trailVerifiedAt; // 마지막 확인 시각
 
   OreumModel({
     required this.id,
@@ -46,10 +47,8 @@ class OreumModel {
     this.timeDown,
     this.surface,
     this.description,
-    String? imageUrl,
     String? stampUrl,
     String? elevationUrl,
-    String? aerialImageUrl,
     this.startLat,
     this.startLng,
     this.summitLat,
@@ -71,14 +70,10 @@ class OreumModel {
     this.features,
     this.recommendedSeason,
     this.imageSource,
-  }) : _imageUrl = imageUrl, _stampUrl = stampUrl, _elevationUrl = elevationUrl, _aerialImageUrl = aerialImageUrl;
-
-  // 이미지 URL (상대경로 → 전체 URL 변환)
-  String? get imageUrl {
-    if (_imageUrl == null) return null;
-    if (_imageUrl.startsWith('http')) return _imageUrl;
-    return '$_storageBaseUrl$_imageUrl';
-  }
+    this.visitTip,
+    this.trailStatus,
+    this.trailVerifiedAt,
+  }) : _stampUrl = stampUrl, _elevationUrl = elevationUrl;
 
   // 스탬프 URL (상대경로 → 전체 URL 변환)
   String? get stampUrl {
@@ -92,13 +87,6 @@ class OreumModel {
     if (_elevationUrl == null) return null;
     if (_elevationUrl.startsWith('http')) return _elevationUrl;
     return '$_storageBaseUrl$_elevationUrl';
-  }
-
-  // 항공사진 URL (상대경로 → 전체 URL 변환)
-  String? get aerialImageUrl {
-    if (_aerialImageUrl == null) return null;
-    if (_aerialImageUrl.startsWith('http')) return _aerialImageUrl;
-    return '$_storageBaseUrl$_aerialImageUrl';
   }
 
   // 총 소요시간 (분)
@@ -147,10 +135,8 @@ class OreumModel {
       timeDown: json['time_down'],
       surface: json['surface'],
       description: json['description'],
-      imageUrl: json['image_url'],
       stampUrl: json['stamp_url'],
       elevationUrl: json['elevation_url'],
-      aerialImageUrl: json['aerial_image_url'],
       startLat: json['start_lat']?.toDouble(),
       startLng: json['start_lng']?.toDouble(),
       summitLat: json['summit_lat']?.toDouble(),
@@ -174,6 +160,11 @@ class OreumModel {
       features: json['features'],
       recommendedSeason: json['recommended_season'],
       imageSource: json['image_source'],
+      visitTip: json['visit_tip'],
+      trailStatus: json['trail_status'],
+      trailVerifiedAt: json['trail_verified_at'] != null
+          ? DateTime.tryParse(json['trail_verified_at'])
+          : null,
     );
   }
 
@@ -188,10 +179,8 @@ class OreumModel {
       'time_down': timeDown,
       'surface': surface,
       'description': description,
-      'image_url': _imageUrl,
       'stamp_url': _stampUrl,
       'elevation_url': _elevationUrl,
-      'aerial_image_url': _aerialImageUrl,
       'start_lat': startLat,
       'start_lng': startLng,
       'summit_lat': summitLat,
@@ -213,6 +202,9 @@ class OreumModel {
       'features': features,
       'recommended_season': recommendedSeason,
       'image_source': imageSource,
+      'visit_tip': visitTip,
+      'trail_status': trailStatus,
+      'trail_verified_at': trailVerifiedAt?.toIso8601String(),
     };
   }
 }

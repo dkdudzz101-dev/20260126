@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/oreum_provider.dart';
+import '../../providers/stamp_provider.dart';
 import '../../models/oreum_model.dart';
 import 'oreum_detail_screen.dart';
 
@@ -17,16 +18,15 @@ class OreumSearchScreen extends StatefulWidget {
 class _OreumSearchScreenState extends State<OreumSearchScreen> {
   final _searchController = TextEditingController();
   String? _selectedDifficulty;
+  String? _selectedTrailStatus; // 'verified' or 'checking'
+  int _selectedTab = 0; // 0: 인증된 오름, 1: 미인증 오름
   List<OreumModel> _filteredOreums = [];
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final oreums = context.read<OreumProvider>().oreums;
-      setState(() {
-        _filteredOreums = oreums;
-      });
+      _filterOreums();
     });
   }
 
@@ -36,12 +36,30 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
     super.dispose();
   }
 
+  List<OreumModel> _getBaseList() {
+    final oreumProvider = context.read<OreumProvider>();
+    final stampProvider = context.read<StampProvider>();
+
+    switch (_selectedTab) {
+      case 0: // 인증된 오름
+        return oreumProvider.allOreumsForStamp
+            .where((o) => stampProvider.hasStamp(o.id))
+            .toList();
+      case 1: // 미인증 오름
+        return oreumProvider.allOreumsForStamp
+            .where((o) => !stampProvider.hasStamp(o.id))
+            .toList();
+      default:
+        return oreumProvider.allOreumsForStamp;
+    }
+  }
+
   void _filterOreums() {
-    final provider = context.read<OreumProvider>();
     final query = _searchController.text.toLowerCase();
+    final baseList = _getBaseList();
 
     setState(() {
-      _filteredOreums = provider.oreums.where((oreum) {
+      _filteredOreums = baseList.where((oreum) {
         final matchesQuery = query.isEmpty ||
             oreum.name.toLowerCase().contains(query) ||
             (oreum.trailName?.toLowerCase().contains(query) ?? false);
@@ -49,7 +67,10 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
         final matchesDifficulty = _selectedDifficulty == null ||
             oreum.difficulty == _selectedDifficulty;
 
-        return matchesQuery && matchesDifficulty;
+        final matchesTrailStatus = _selectedTrailStatus == null ||
+            (oreum.trailStatus ?? 'checking') == _selectedTrailStatus;
+
+        return matchesQuery && matchesDifficulty && matchesTrailStatus;
       }).toList();
     });
   }
@@ -62,7 +83,6 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            // 뒤로 가기 시 필터 초기화
             context.read<OreumProvider>().clearFilters();
             Navigator.pop(context);
           },
@@ -70,10 +90,77 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
       ),
       body: Column(
         children: [
+          _buildTabSelector(),
           _buildSearchBar(),
           _buildFilterChips(),
           Expanded(child: _buildOreumList()),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTabSelector() {
+    final stampProvider = context.watch<StampProvider>();
+    final oreumProvider = context.watch<OreumProvider>();
+    final stampedCount = oreumProvider.allOreumsForStamp
+        .where((o) => stampProvider.hasStamp(o.id))
+        .length;
+    final unstampedCount = oreumProvider.allOreumsForStamp
+        .where((o) => !stampProvider.hasStamp(o.id))
+        .length;
+
+    final tabs = [
+      {'label': '인증된 오름', 'count': stampedCount},
+      {'label': '미인증 오름', 'count': unstampedCount},
+    ];
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: List.generate(tabs.length, (index) {
+          final isSelected = _selectedTab == index;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _selectedTab = index;
+                });
+                _filterOreums();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: isSelected ? AppColors.primary : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      tabs[index]['label'] as String,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected ? Colors.white : AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${tabs[index]['count']}개',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isSelected ? Colors.white70 : AppColors.textHint,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
       ),
     );
   }
@@ -135,6 +222,32 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
               ),
             );
           }),
+          const SizedBox(width: 8),
+          Container(width: 1, height: 24, color: Colors.grey.shade300),
+          const SizedBox(width: 8),
+          FilterChip(
+            label: const Text('확인됨'),
+            selected: _selectedTrailStatus == 'verified',
+            selectedColor: Colors.green.shade100,
+            onSelected: (selected) {
+              setState(() {
+                _selectedTrailStatus = selected ? 'verified' : null;
+              });
+              _filterOreums();
+            },
+          ),
+          const SizedBox(width: 8),
+          FilterChip(
+            label: const Text('미확인'),
+            selected: _selectedTrailStatus == 'checking',
+            selectedColor: Colors.orange.shade100,
+            onSelected: (selected) {
+              setState(() {
+                _selectedTrailStatus = selected ? 'checking' : null;
+              });
+              _filterOreums();
+            },
+          ),
         ],
       ),
     );
@@ -142,15 +255,19 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
 
   Widget _buildOreumList() {
     if (_filteredOreums.isEmpty) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.search_off, size: 64, color: AppColors.textHint),
-            SizedBox(height: 16),
+            Icon(
+              _selectedTab == 0 ? Icons.verified_outlined : Icons.search_off,
+              size: 64,
+              color: AppColors.textHint,
+            ),
+            const SizedBox(height: 16),
             Text(
-              '검색 결과가 없습니다',
-              style: TextStyle(color: AppColors.textSecondary),
+              _selectedTab == 0 ? '아직 인증된 오름이 없습니다' : '모든 오름이 인증되었습니다',
+              style: const TextStyle(color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -170,7 +287,9 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
 
   Widget _buildOreumCard(OreumModel oreum) {
     final oreumProvider = context.watch<OreumProvider>();
+    final stampProvider = context.watch<StampProvider>();
     final isBookmarked = oreumProvider.isBookmarked(oreum.id);
+    final isStamped = stampProvider.hasStamp(oreum.id);
 
     return GestureDetector(
       onTap: () {
@@ -200,7 +319,7 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
               height: 70,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
-                color: AppColors.surface,
+                color: Colors.white,
               ),
               child: oreum.stampUrl != null
                   ? ClipRRect(
@@ -235,7 +354,9 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
                         _buildDifficultyBadge(oreum.difficulty!),
                         const SizedBox(width: 8),
                       ],
-                      if (oreum.timeUp != null)
+                      _buildTrailStatusBadge(oreum.trailStatus ?? 'checking'),
+                      const SizedBox(width: 8),
+                      if (oreum.timeUp != null && oreum.timeUp! > 0)
                         Text(
                           '${oreum.timeUp}분',
                           style: const TextStyle(
@@ -248,6 +369,11 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
                 ],
               ),
             ),
+            if (isStamped)
+              const Padding(
+                padding: EdgeInsets.only(right: 4),
+                child: Icon(Icons.verified, color: Colors.green, size: 20),
+              ),
             if (isBookmarked)
               const Padding(
                 padding: EdgeInsets.only(right: 4),
@@ -255,6 +381,28 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
               ),
             const Icon(Icons.chevron_right, color: AppColors.textHint),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrailStatusBadge(String status) {
+    final isVerified = status == 'verified';
+    final color = isVerified ? Colors.green : Colors.orange;
+    final label = isVerified ? '확인됨' : '미확인';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          color: color,
+          fontWeight: FontWeight.w500,
         ),
       ),
     );

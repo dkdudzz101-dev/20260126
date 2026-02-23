@@ -265,6 +265,35 @@ class StampProvider extends ChangeNotifier {
     return _stampedOreumIds.contains(oreumId) || _stamps.any((s) => s.oreumId == oreumId);
   }
 
+  // 수동 점검완료 시 GPS 확인 없이 스탬프 저장 (인증된 오름 + 인증순위 반영)
+  Future<void> verifyAndStampManual(OreumModel oreum) async {
+    if (_stamps.any((s) => s.oreumId == oreum.id)) return;
+
+    try {
+      await _stampService.recordStamp(
+        oreumId: oreum.id,
+        distanceWalked: oreum.distance?.toDouble(),
+        timeTaken: oreum.timeUp,
+      );
+    } catch (e) {
+      debugPrint('수동 스탬프 저장 에러: $e');
+    }
+
+    final stamp = StampModel(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      oreumId: oreum.id,
+      oreumName: oreum.name,
+      stampedAt: DateTime.now(),
+      lat: oreum.summitLat ?? oreum.startLat ?? 0,
+      lng: oreum.summitLng ?? oreum.startLng ?? 0,
+      stampUrl: oreum.stampUrl,
+    );
+
+    _stamps.add(stamp);
+    _stampedOreumIds.add(oreum.id);
+    notifyListeners();
+  }
+
   // 스탬프 획득 날짜 가져오기
   DateTime? getStampDate(String oreumId) {
     final stamp = _stamps.where((s) => s.oreumId == oreumId).firstOrNull;

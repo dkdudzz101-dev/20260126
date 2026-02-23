@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../theme/app_colors.dart';
 import '../../services/notice_service.dart';
 
@@ -174,6 +176,43 @@ class _NoticeCard extends StatelessWidget {
     );
   }
 
+  Widget _buildLinkedContent(String text) {
+    final urlPattern = RegExp(r'https?://[^\s]+');
+    final matches = urlPattern.allMatches(text).toList();
+
+    if (matches.isEmpty) {
+      return Text(text, style: const TextStyle(fontSize: 15, height: 1.8));
+    }
+
+    final spans = <TextSpan>[];
+    int lastEnd = 0;
+
+    for (final match in matches) {
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
+      }
+      final url = match.group(0)!;
+      spans.add(TextSpan(
+        text: url,
+        style: const TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
+        recognizer: TapGestureRecognizer()
+          ..onTap = () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+      ));
+      lastEnd = match.end;
+    }
+
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastEnd)));
+    }
+
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(fontSize: 15, height: 1.8, color: Colors.black),
+        children: spans,
+      ),
+    );
+  }
+
   void _showDetail(BuildContext context) {
     Navigator.push(
       context,
@@ -233,13 +272,7 @@ class _NoticeCard extends StatelessWidget {
                   ),
                 ),
                 const Divider(height: 32),
-                Text(
-                  content,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    height: 1.8,
-                  ),
-                ),
+                _buildLinkedContent(content),
               ],
             ),
           ),

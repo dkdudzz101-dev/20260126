@@ -10,8 +10,13 @@ class BannerService {
       // banners 테이블에서 배너 조회
       final response = await SupabaseConfig.client
           .from('banners')
-          .select('image_url')
+          .select('*')
           .order('id', ascending: true);
+
+      debugPrint('배너 쿼리 결과: ${response.length}개 row');
+      for (final row in response) {
+        debugPrint('배너 row: $row');
+      }
 
       if (response.isNotEmpty) {
         final List<String> urls = [];
@@ -20,6 +25,8 @@ class BannerService {
           if (url != null && url.isNotEmpty) {
             urls.add(url);
             debugPrint('배너 발견: $url');
+          } else {
+            debugPrint('배너 image_url 비어있음: $row');
           }
         }
 

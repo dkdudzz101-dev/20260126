@@ -1,8 +1,10 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
+import 'oreum_service.dart';
 
 class StampService {
   final SupabaseClient _client = SupabaseConfig.client;
+  final OreumService _oreumService = OreumService();
 
   // 스탬프 기록 저장 (stamp ID 반환) - 완등 인증용
   Future<String?> recordStamp({
@@ -16,6 +18,10 @@ class StampService {
     double? elevationLoss,
     double? maxAltitude,
     double? minAltitude,
+    double? descentDistance,
+    int? descentTime,
+    int? descentSteps,
+    int? descentCalories,
   }) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw Exception('로그인이 필요합니다');
@@ -32,18 +38,30 @@ class StampService {
       'elevation_loss': elevationLoss,
       'max_altitude': maxAltitude,
       'min_altitude': minAltitude,
+      'descent_distance': descentDistance,
+      'descent_time': descentTime,
+      'descent_steps': descentSteps,
+      'descent_calories': descentCalories,
       'completed_at': DateTime.now().toIso8601String(),
     }).select('id').single();
 
     final stampId = response['id']?.toString();
 
-    // 총 이동거리 업데이트
-    if (distanceWalked != null) {
-      await _updateTotalDistance(userId, distanceWalked);
+    // 총 이동거리 업데이트 (등산 + 하산)
+    final totalDist = (distanceWalked ?? 0) + (descentDistance ?? 0);
+    if (totalDist > 0) {
+      await _updateTotalDistance(userId, totalDist);
     }
 
     // 뱃지 체크
     await _checkAndAwardBadges(userId);
+
+    // 등산로 점검 상태를 '점검완료'로 변경
+    try {
+      await _oreumService.updateTrailStatus(oreumId, 'verified');
+    } catch (e) {
+      // 점검 상태 업데이트 실패 시 무시
+    }
 
     return stampId;
   }
@@ -60,6 +78,10 @@ class StampService {
     double? elevationLoss,
     double? maxAltitude,
     double? minAltitude,
+    double? descentDistance,
+    int? descentTime,
+    int? descentSteps,
+    int? descentCalories,
   }) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw Exception('로그인이 필요합니다');
@@ -77,17 +99,30 @@ class StampService {
       'elevation_loss': elevationLoss,
       'max_altitude': maxAltitude,
       'min_altitude': minAltitude,
+      'descent_distance': descentDistance,
+      'descent_time': descentTime,
+      'descent_steps': descentSteps,
+      'descent_calories': descentCalories,
       'hiked_at': DateTime.now().toIso8601String(),
     }).select('id').single();
 
     final logId = response['id']?.toString();
 
-    // 총 이동거리/걸음수 업데이트
-    if (distanceWalked != null) {
-      await _updateTotalDistance(userId, distanceWalked);
+    // 총 이동거리/걸음수 업데이트 (등산 + 하산)
+    final totalDist = (distanceWalked ?? 0) + (descentDistance ?? 0);
+    if (totalDist > 0) {
+      await _updateTotalDistance(userId, totalDist);
     }
-    if (steps != null) {
-      await _updateTotalSteps(userId, steps);
+    final totalSteps = (steps ?? 0) + (descentSteps ?? 0);
+    if (totalSteps > 0) {
+      await _updateTotalSteps(userId, totalSteps);
+    }
+
+    // 등산로 점검 상태를 '점검완료'로 변경
+    try {
+      await _oreumService.updateTrailStatus(oreumId, 'verified');
+    } catch (e) {
+      // 점검 상태 업데이트 실패 시 무시
     }
 
     return logId;
@@ -340,6 +375,21 @@ class StampService {
       return total;
     } catch (e) {
       return 0;
+    }
+  }
+
+  // 특정 오름의 인증자 목록 (순위 포함, 완등 시각 순)
+  Future<List<Map<String, dynamic>>> getOreumStampUsers(String oreumId) async {
+    try {
+      final response = await _client
+          .from('stamps')
+          .select('user_id, completed_at, users(nickname, profile_image)')
+          .eq('oreum_id', oreumId)
+          .order('completed_at', ascending: true);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      return [];
     }
   }
 }

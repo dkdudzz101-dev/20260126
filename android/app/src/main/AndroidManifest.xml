@@ -99,6 +99,10 @@
         </intent>
         <!-- 카카오톡 앱 확인용 -->
         <package android:name="com.kakao.talk" />
+        <!-- 카카오내비 앱 확인용 -->
+        <package android:name="com.locnall.KimGiSa" />
+        <!-- 카카오맵 앱 확인용 -->
+        <package android:name="net.daum.android.map" />
         <!-- 브라우저 열기용 -->
         <intent>
             <action android:name="android.intent.action.VIEW" />

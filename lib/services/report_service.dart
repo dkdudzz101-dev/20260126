@@ -83,6 +83,30 @@ class ReportService {
     });
   }
 
+  // 오름 정보 오류 신고
+  Future<void> reportOreumInfo({
+    required String oreumId,
+    required String oreumName,
+    required String errorType,
+    required String details,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('로그인이 필요합니다');
+
+    await _client.from('reports').insert({
+      'reporter_id': userId,
+      'target_type': 'oreum_info',
+      'target_id': '00000000-0000-0000-0000-000000000000',
+      'reason': '[$oreumName] $errorType: $details',
+      'oreum_id': oreumId,
+      'error_type': errorType,
+      'latitude': latitude,
+      'longitude': longitude,
+    });
+  }
+
   // 일반 신고 (앱 관련 문제 등)
   Future<void> reportGeneral({
     required String reason,

@@ -145,14 +145,21 @@ class MapService {
     return true;
   }
 
-  // 카카오맵으로 길안내 시작
+  // 카카오 자동차 길안내 시작
   Future<bool> openKakaoMapNavigation({
     required double destLat,
     required double destLng,
     required String destName,
   }) async {
-    // 먼저 카카오맵 앱으로 시도
+    // 현재 위치 가져오기
+    final position = await getCurrentPosition();
+    final startLat = position?.latitude ?? 33.4996;
+    final startLng = position?.longitude ?? 126.5312;
+
+    // 1. 카카오맵 앱으로 자동차 길안내 (출발지 포함)
     final kakaoMapUri = Uri.parse(KakaoConfig.getKakaoMapNavigationUrl(
+      startLat: startLat,
+      startLng: startLng,
       destLat: destLat,
       destLng: destLng,
       destName: destName,
@@ -162,7 +169,7 @@ class MapService {
       return await launchUrl(kakaoMapUri);
     }
 
-    // 앱이 없으면 웹으로
+    // 2. 앱이 없으면 웹으로
     final webUri = Uri.parse(KakaoConfig.getKakaoMapWebUrl(
       destLat: destLat,
       destLng: destLng,
