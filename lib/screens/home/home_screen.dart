@@ -11,6 +11,7 @@ import '../../services/banner_service.dart';
 import '../../services/weather_service.dart';
 import '../../services/oreum_service.dart';
 import '../../services/sunrise_service.dart';
+import '../../services/map_service.dart';
 import '../../models/oreum_model.dart';
 import '../oreum/oreum_detail_screen.dart';
 import '../oreum/oreum_search_screen.dart';
@@ -75,8 +76,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       // 날씨 로드 후 추천 오름 계산
       await _loadWeatherAndRecommendation();
-      // 위치 기반 가까운 오름
-      await _loadNearbyOreums();
+      // 위치 기반 가까운 오름 (권한이 이미 있을 때만, 요청 안 함)
+      await _loadNearbyOreumsIfPermitted();
     });
   }
 
@@ -152,18 +153,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// 권한이 이미 있을 때만 가까운 오름 로드 (자동 호출용, 절대 권한 요청 안 함)
+  Future<void> _loadNearbyOreumsIfPermitted() async {
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
+    }
+    await _loadNearbyOreums();
+  }
+
   Future<void> _loadNearbyOreums() async {
     try {
-      // 위치 권한 확인
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return;
-      }
 
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.medium,
@@ -692,11 +693,34 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 12),
         if (_nearbyOreums.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              '위치 정보를 불러오는 중...',
-              style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+          GestureDetector(
+            onTap: () async {
+              final granted = await MapService.ensureLocationPermission(context);
+              if (granted && mounted) {
+                await _loadNearbyOreums();
+              }
+            },
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.location_on_outlined, size: 20, color: Colors.grey[500]),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '위치 권한을 허용하면 가까운 오름을 확인할 수 있습니다',
+                      style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, size: 20, color: Colors.grey[400]),
+                ],
+              ),
             ),
           )
         else

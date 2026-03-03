@@ -229,11 +229,37 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   Widget _buildAppBar(BuildContext context) {
     return SliverAppBar(
       pinned: true,
-      title: Text(
-        oreum.name,
-        style: const TextStyle(
-          fontWeight: FontWeight.bold,
-        ),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            oreum.name,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              if (oreum.difficulty != null)
+                _buildAppBarBadge(
+                  oreum.difficulty!,
+                  _getDifficultyColor(oreum.difficulty),
+                ),
+              if (oreum.difficulty != null) const SizedBox(width: 4),
+              _buildAppBarBadge(
+                (oreum.trailStatus ?? 'checking') == 'verified' ? '확인됨' : '미확인',
+                (oreum.trailStatus ?? 'checking') == 'verified' ? Colors.green : Colors.orange,
+              ),
+              const SizedBox(width: 4),
+              if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
+                _buildAppBarBadge(oreum.restriction!, Colors.red)
+              else
+                _buildAppBarBadge(
+                  oreum.geojsonPath != null ? '등산로 있음' : '등산로 없음',
+                  oreum.geojsonPath != null ? Colors.blue : Colors.grey,
+                ),
+            ],
+          ),
+        ],
       ),
       actions: [
         Consumer2<OreumProvider, AuthProvider>(
@@ -1360,6 +1386,20 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     );
   }
 
+  Widget _buildAppBarBadge(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
   Color _getDifficultyColor(String? difficulty) {
     switch (difficulty) {
       case '쉬움':
@@ -1673,6 +1713,17 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   }
 
   Future<void> _verifyStamp() async {
+    // 중앙화된 위치 권한 플로우 (전체화면 공개 포함)
+    final granted = await MapService.ensureLocationPermission(context);
+    if (!granted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('위치 권한이 필요합니다')),
+        );
+      }
+      return;
+    }
+
     final stampProvider = context.read<StampProvider>();
 
     showDialog(

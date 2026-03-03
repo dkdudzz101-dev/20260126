@@ -13,6 +13,7 @@ import '../../services/block_service.dart';
 import '../../services/report_service.dart';
 import '../../utils/content_filter.dart';
 import '../auth/login_screen.dart';
+import '../oreum/oreum_detail_screen.dart';
 
 class CommunityScreen extends StatefulWidget {
   const CommunityScreen({super.key});
@@ -1388,6 +1389,51 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     widget.post.content,
                     style: const TextStyle(fontSize: 15, height: 1.6),
                   ),
+                  // 이미지 (있을 경우)
+                  if (widget.post.images.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    ...widget.post.images.map((imageUrl) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: GestureDetector(
+                        onTap: () => _showFullImage(context, imageUrl),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.network(
+                            imageUrl,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              height: 200,
+                              color: AppColors.surface,
+                              child: const Center(
+                                child: Icon(Icons.broken_image, size: 48, color: AppColors.textHint),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )),
+                  ],
+                  // 오름 상세보기 버튼
+                  if (widget.post.oreumId != null) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _navigateToOreumDetail(widget.post.oreumId!),
+                        icon: const Icon(Icons.terrain, size: 18),
+                        label: Text('${widget.post.oreumName ?? '오름'} 상세보기'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   // 좋아요, 댓글 수, 공유
                   Consumer<CommunityProvider>(
@@ -1658,6 +1704,47 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     }
   }
 
+  void _showFullImage(BuildContext context, String imageUrl) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            iconTheme: const IconThemeData(color: Colors.white),
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              child: Image.network(
+                imageUrl,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Icon(
+                  Icons.broken_image,
+                  size: 64,
+                  color: Colors.white54,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _navigateToOreumDetail(String oreumId) {
+    final oreumProvider = context.read<OreumProvider>();
+    final oreum = oreumProvider.oreums.where((o) => o.id == oreumId).firstOrNull;
+    if (oreum != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => OreumDetailScreen(oreum: oreum),
+        ),
+      );
+    }
+  }
+
   void _sharePost() {
     String shareText = '';
     if (widget.post.oreumName != null) {
@@ -1786,6 +1873,23 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   void _showBlockConfirmDialog(BuildContext ctx, String userId, String nickname) {
+    // 로그인 체크
+    final authProvider = ctx.read<AuthProvider>();
+    if (!authProvider.isLoggedIn) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('로그인이 필요합니다')),
+      );
+      return;
+    }
+
+    // 자기 자신 차단 방지
+    if (authProvider.user?.id == userId) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('자기 자신은 차단할 수 없습니다')),
+      );
+      return;
+    }
+
     showDialog(
       context: ctx,
       builder: (dialogContext) => AlertDialog(
@@ -1802,6 +1906,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
+              // 다이얼로그 먼저 닫기
+              Navigator.pop(dialogContext);
+
               try {
                 final blockService = BlockService();
                 final reportService = ReportService();
@@ -1813,33 +1920,28 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 );
 
                 // 자동 신고 (Apple 요구사항: 차단 시 개발자에게 알림)
-                await reportService.reportUser(
-                  targetUserId: userId,
-                  reason: 'user_blocked',
-                  details: '$nickname 사용자를 차단함 (자동 신고)',
-                );
+                try {
+                  await reportService.reportUser(
+                    targetUserId: userId,
+                    reason: 'user_blocked',
+                    details: '$nickname 사용자를 차단함 (자동 신고)',
+                  );
+                } catch (_) {
+                  // 신고 실패해도 차단은 유지
+                }
 
                 // Provider 업데이트 (즉시 피드에서 제거)
                 if (ctx.mounted) {
                   ctx.read<CommunityProvider>().blockUser(userId);
-                }
-
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                }
-                if (ctx.mounted) {
                   Navigator.pop(ctx); // 상세 화면 닫기
                   ScaffoldMessenger.of(ctx).showSnackBar(
                     SnackBar(content: Text('$nickname 님을 차단했습니다')),
                   );
                 }
               } catch (e) {
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                }
                 if (ctx.mounted) {
                   ScaffoldMessenger.of(ctx).showSnackBar(
-                    SnackBar(content: Text('차단 실패: $e')),
+                    const SnackBar(content: Text('차단에 실패했습니다. 다시 시도해주세요.')),
                   );
                 }
               }

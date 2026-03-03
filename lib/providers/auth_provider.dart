@@ -631,6 +631,63 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  // 이메일 OTP 발송
+  Future<Map<String, dynamic>> sendEmailOtp(String email) async {
+    try {
+      await _supabase.auth.signInWithOtp(
+        email: email,
+        shouldCreateUser: false,
+      );
+      return {'success': true};
+    } on AuthException catch (e) {
+      // shouldCreateUser: false에서 사용자가 없으면 에러가 날 수 있음
+      // 그래도 OTP는 발송됨 (Supabase 설정에 따라 다름)
+      debugPrint('OTP 발송 AuthException: ${e.message}');
+      // shouldCreateUser: false 실패 시 true로 재시도
+      try {
+        await _supabase.auth.signInWithOtp(
+          email: email,
+          shouldCreateUser: true,
+        );
+        return {'success': true};
+      } catch (retryError) {
+        debugPrint('OTP 재시도 에러: $retryError');
+        return {'success': false, 'error': '인증번호 발송에 실패했습니다.'};
+      }
+    } catch (e) {
+      debugPrint('OTP 발송 에러: $e');
+      return {'success': false, 'error': '인증번호 발송에 실패했습니다.'};
+    }
+  }
+
+  // 이메일 OTP 검증
+  Future<Map<String, dynamic>> verifyEmailOtp(String email, String token) async {
+    try {
+      final response = await _supabase.auth.verifyOTP(
+        email: email,
+        token: token,
+        type: OtpType.email,
+      );
+
+      if (response.session != null) {
+        // OTP 검증 성공 → 세션 정리 (회원가입은 별도로 진행)
+        await _supabase.auth.signOut();
+        return {'success': true};
+      }
+
+      return {'success': false, 'error': '인증번호가 올바르지 않습니다.'};
+    } on AuthException catch (e) {
+      debugPrint('OTP 검증 에러: ${e.message}');
+      if (e.message.contains('expired')) {
+        return {'success': false, 'error': '인증번호가 만료되었습니다. 다시 발송해주세요.'};
+      }
+      return {'success': false, 'error': '인증번호가 올바르지 않습니다.'};
+    } catch (e) {
+      debugPrint('OTP 검증 에러: $e');
+      return {'success': false, 'error': '인증 중 오류가 발생했습니다.'};
+    }
+  }
+
   // 아이디/비밀번호 회원가입
   Future<Map<String, dynamic>> signUpWithId({
     required String userId,

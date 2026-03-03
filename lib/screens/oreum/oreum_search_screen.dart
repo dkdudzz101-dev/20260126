@@ -348,14 +348,16 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Row(
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
                     children: [
-                      if (oreum.difficulty != null) ...[
+                      if (oreum.difficulty != null)
                         _buildDifficultyBadge(oreum.difficulty!),
-                        const SizedBox(width: 8),
-                      ],
                       _buildTrailStatusBadge(oreum.trailStatus ?? 'checking'),
-                      const SizedBox(width: 8),
+                      _buildTrailDataBadge(oreum.geojsonPath != null),
+                      if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
+                        _buildRestrictionBadge(oreum.restriction!),
                       if (oreum.timeUp != null && oreum.timeUp! > 0)
                         Text(
                           '${oreum.timeUp}분',
@@ -402,6 +404,39 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
         style: TextStyle(
           fontSize: 10,
           color: color,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrailDataBadge(bool hasTrail) {
+    final color = hasTrail ? const Color(0xFF2E7D32) : Colors.grey;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        hasTrail ? '등산로 있음' : '등산로 없음',
+        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w500),
+      ),
+    );
+  }
+
+  Widget _buildRestrictionBadge(String restriction) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFB71C1C).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        restriction,
+        style: const TextStyle(
+          fontSize: 10,
+          color: Color(0xFFB71C1C),
           fontWeight: FontWeight.w500,
         ),
       ),

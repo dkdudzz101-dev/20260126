@@ -32,15 +32,10 @@ void main() async {
       debugPrint('SDK 초기화 에러: $e');
     }
 
-    // 걸음수 서비스 초기화
+    // 걸음수 서비스 인스턴스 생성 (권한 요청은 UI에서 공개 후 처리)
     final pedometerService = PedometerService();
-    try {
-      await pedometerService.initialize();
-    } catch (e) {
-      debugPrint('걸음수 서비스 초기화 에러: $e');
-    }
 
-    // 백그라운드 위치 서비스 초기화
+    // 백그라운드 위치 서비스 설정만 초기화 (권한 요청 X)
     try {
       await BackgroundLocationService.initialize();
     } catch (e) {

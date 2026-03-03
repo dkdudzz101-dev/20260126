@@ -1378,9 +1378,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   );
                 }
               } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('올바른 체중을 입력해주세요')),
-                );
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('올바른 체중을 입력해주세요')),
+                  );
+                }
               }
             },
             child: const Text('저장'),

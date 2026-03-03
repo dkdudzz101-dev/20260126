@@ -24,14 +24,14 @@ class PedometerService extends ChangeNotifier {
   bool get isWalking => _isWalking;
   bool get isInitialized => _isInitialized;
 
-  // 초기화
+  // 초기화 (권한은 UI 레이어에서 미리 취득 후 호출)
   Future<void> initialize() async {
     if (_isInitialized) return;
 
-    // 권한 요청
-    final permissionGranted = await _requestPermission();
-    if (!permissionGranted) {
-      debugPrint('걸음수 권한이 거부되었습니다');
+    // 권한 확인만 (요청 X — 권한 공개/요청은 UI에서 처리)
+    final status = await Permission.activityRecognition.status;
+    if (!status.isGranted) {
+      debugPrint('걸음수 권한 없음 — UI에서 권한을 먼저 요청하세요');
       return;
     }
 
@@ -46,12 +46,6 @@ class PedometerService extends ChangeNotifier {
 
     _isInitialized = true;
     notifyListeners();
-  }
-
-  // 권한 요청
-  Future<bool> _requestPermission() async {
-    final status = await Permission.activityRecognition.request();
-    return status.isGranted;
   }
 
   // 저장된 데이터 로드

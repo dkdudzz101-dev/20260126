@@ -3,6 +3,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../theme/app_colors.dart';
 import '../../models/oreum_model.dart';
 import '../../services/report_service.dart';
+import '../../services/map_service.dart';
 
 class OreumErrorReportScreen extends StatefulWidget {
   final OreumModel oreum;
@@ -45,9 +46,7 @@ class _OreumErrorReportScreenState extends State<OreumErrorReportScreen> {
     super.initState();
     _latitude = widget.initialLatitude;
     _longitude = widget.initialLongitude;
-    if (_latitude == null || _longitude == null) {
-      _getCurrentLocation();
-    }
+    // 위치는 사용자가 '현재 위치 가져오기' 버튼을 눌렀을 때만 요청
   }
 
   @override
@@ -59,22 +58,12 @@ class _OreumErrorReportScreenState extends State<OreumErrorReportScreen> {
   Future<void> _getCurrentLocation() async {
     setState(() => _isLoadingLocation = true);
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('위치 권한이 필요합니다')),
-            );
-          }
-          return;
-        }
-      }
-      if (permission == LocationPermission.deniedForever) {
+      // 중앙화된 위치 권한 플로우 (전체화면 공개 포함)
+      final granted = await MapService.ensureLocationPermission(context);
+      if (!granted) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('설정에서 위치 권한을 허용해주세요')),
+            const SnackBar(content: Text('위치 권한이 필요합니다')),
           );
         }
         return;
@@ -106,7 +95,7 @@ class _OreumErrorReportScreenState extends State<OreumErrorReportScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('정보 오류 신고'),
+        title: const Text('정보 제보'),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -173,7 +162,7 @@ class _OreumErrorReportScreenState extends State<OreumErrorReportScreen> {
                             color: Colors.white,
                           ),
                         )
-                      : const Text('신고하기'),
+                      : const Text('제보하기'),
                 ),
               ),
             ],
@@ -351,8 +340,8 @@ class _OreumErrorReportScreenState extends State<OreumErrorReportScreen> {
           context: context,
           builder: (context) => AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Text('신고 접수 완료'),
-            content: const Text('오류 신고가 접수되었습니다.\n확인 후 수정하겠습니다. 감사합니다.'),
+            title: const Text('제보 접수 완료'),
+            content: const Text('제보가 접수되었습니다.\n확인 후 수정하겠습니다. 감사합니다.'),
             actions: [
               TextButton(
                 onPressed: () {

@@ -22,12 +22,21 @@ class _SignupScreenState extends State<SignupScreen> {
   final _nicknameController = TextEditingController();
   final _emailController = TextEditingController();
 
+  final _otpController = TextEditingController();
+
   DateTime? _birthDate;
+  final _birthController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscurePasswordConfirm = true;
   bool _agreeTerms = false;
   bool _agreePrivacy = false;
+
+  // 이메일 OTP 관련
+  bool _otpSent = false;
+  bool _emailVerified = false;
+  bool _otpSending = false;
+  bool _otpVerifying = false;
 
   @override
   void dispose() {
@@ -37,7 +46,48 @@ class _SignupScreenState extends State<SignupScreen> {
     _nameController.dispose();
     _nicknameController.dispose();
     _emailController.dispose();
+    _otpController.dispose();
+    _birthController.dispose();
     super.dispose();
+  }
+
+  void _onBirthDateChanged(String value) {
+    // 자동 포맷팅: 숫자만 추출 후 YYYY/MM/DD 형식으로
+    final digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+    String formatted = '';
+
+    for (int i = 0; i < digits.length && i < 8; i++) {
+      if (i == 4 || i == 6) formatted += '/';
+      formatted += digits[i];
+    }
+
+    if (formatted != value) {
+      _birthController.value = TextEditingValue(
+        text: formatted,
+        selection: TextSelection.collapsed(offset: formatted.length),
+      );
+    }
+
+    // 8자리 완성되면 날짜 파싱
+    if (digits.length == 8) {
+      final year = int.tryParse(digits.substring(0, 4));
+      final month = int.tryParse(digits.substring(4, 6));
+      final day = int.tryParse(digits.substring(6, 8));
+
+      if (year != null && month != null && day != null &&
+          month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        try {
+          final date = DateTime(year, month, day);
+          if (date.isBefore(DateTime.now()) && date.isAfter(DateTime(1900))) {
+            setState(() => _birthDate = date);
+            return;
+          }
+        } catch (_) {}
+      }
+      setState(() => _birthDate = null);
+    } else {
+      setState(() => _birthDate = null);
+    }
   }
 
   Future<void> _selectBirthDate() async {
@@ -60,7 +110,80 @@ class _SignupScreenState extends State<SignupScreen> {
       },
     );
     if (picked != null) {
-      setState(() => _birthDate = picked);
+      setState(() {
+        _birthDate = picked;
+        _birthController.text = '${picked.year}/${picked.month.toString().padLeft(2, '0')}/${picked.day.toString().padLeft(2, '0')}';
+      });
+    }
+  }
+
+  Future<void> _sendOtp() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty || !RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('올바른 이메일을 입력해주세요')),
+      );
+      return;
+    }
+
+    setState(() => _otpSending = true);
+
+    try {
+      final authProvider = context.read<AuthProvider>();
+      final result = await authProvider.sendEmailOtp(email);
+
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        setState(() {
+          _otpSent = true;
+          _emailVerified = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('인증번호가 이메일로 발송되었습니다')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['error'] ?? '인증번호 발송 실패')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _otpSending = false);
+    }
+  }
+
+  Future<void> _verifyOtp() async {
+    final code = _otpController.text.trim();
+    if (code.length != 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('6자리 인증번호를 입력해주세요')),
+      );
+      return;
+    }
+
+    setState(() => _otpVerifying = true);
+
+    try {
+      final authProvider = context.read<AuthProvider>();
+      final result = await authProvider.verifyEmailOtp(
+        _emailController.text.trim(),
+        code,
+      );
+
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        setState(() => _emailVerified = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('이메일 인증 완료!')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['error'] ?? '인증 실패')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _otpVerifying = false);
     }
   }
 
@@ -232,30 +355,27 @@ class _SignupScreenState extends State<SignupScreen> {
                 // 생년월일
                 _buildLabel('생년월일'),
                 const SizedBox(height: 8),
-                InkWell(
-                  onTap: _selectBirthDate,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
+                TextField(
+                  controller: _birthController,
+                  keyboardType: TextInputType.number,
+                  onChanged: _onBirthDateChanged,
+                  decoration: InputDecoration(
+                    hintText: 'YYYY/MM/DD',
+                    hintStyle: TextStyle(color: AppColors.textSecondary),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade300),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
                     ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _birthDate != null
-                                ? '${_birthDate!.year}년 ${_birthDate!.month}월 ${_birthDate!.day}일'
-                                : '생년월일을 선택하세요',
-                            style: TextStyle(
-                              color: _birthDate != null ? AppColors.textPrimary : AppColors.textSecondary,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ),
-                        const Icon(Icons.calendar_today, color: AppColors.textSecondary, size: 20),
-                      ],
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.calendar_today, color: AppColors.textSecondary, size: 20),
+                      onPressed: _selectBirthDate,
                     ),
                   ),
                 ),
@@ -282,22 +402,113 @@ class _SignupScreenState extends State<SignupScreen> {
                 // 이메일
                 _buildLabel('이메일'),
                 const Text(
-                  '비밀번호 찾기에 사용됩니다',
+                  '인증번호가 발송됩니다',
                   style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 8),
-                TextFormField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: _inputDecoration('이메일을 입력하세요'),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) return '이메일을 입력하세요';
-                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value.trim())) {
-                      return '올바른 이메일 형식이 아닙니다';
-                    }
-                    return null;
-                  },
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _emailController,
+                        keyboardType: TextInputType.emailAddress,
+                        enabled: !_emailVerified,
+                        decoration: _inputDecoration('이메일을 입력하세요').copyWith(
+                          suffixIcon: _emailVerified
+                              ? const Icon(Icons.check_circle, color: Colors.green)
+                              : null,
+                        ),
+                        onChanged: (_) {
+                          if (_otpSent || _emailVerified) {
+                            setState(() {
+                              _otpSent = false;
+                              _emailVerified = false;
+                              _otpController.clear();
+                            });
+                          }
+                        },
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) return '이메일을 입력하세요';
+                          if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value.trim())) {
+                            return '올바른 이메일 형식이 아닙니다';
+                          }
+                          return null;
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: _emailVerified || _otpSending ? null : _sendOtp,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _emailVerified ? Colors.grey : AppColors.primary,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: _otpSending
+                            ? const SizedBox(
+                                width: 18, height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+                              )
+                            : Text(
+                                _emailVerified ? '인증완료' : (_otpSent ? '재발송' : '인증'),
+                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                              ),
+                      ),
+                    ),
+                  ],
                 ),
+
+                // OTP 입력 필드 (발송 후 표시)
+                if (_otpSent && !_emailVerified) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _otpController,
+                          keyboardType: TextInputType.number,
+                          maxLength: 6,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          decoration: _inputDecoration('인증번호 6자리').copyWith(
+                            counterText: '',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: _otpVerifying ? null : _verifyOtp,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: _otpVerifying
+                              ? const SizedBox(
+                                  width: 18, height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+                                )
+                              : const Text('확인', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 24),
 
                 // 약관 동의

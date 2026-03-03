@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/kakao_config.dart';
+import '../screens/permission/location_permission_screen.dart';
 
 class MapService {
   StreamSubscription<Position>? _positionSubscription;
@@ -10,25 +13,53 @@ class MapService {
 
   Stream<Position> get positionStream => _positionController.stream;
 
-  // 위치 권한 확인 및 요청
+  /// 중앙화된 위치 권한 확인 + 전체화면 공개 + 요청 플로우.
+  ///
+  /// - 이미 권한 있으면 → true
+  /// - deniedForever이면 → false
+  /// - 첫 요청이면 → LocationPermissionScreen(전체화면) 표시 후 OS 권한 요청
+  /// - 이미 설명 본 적 있으면 → OS 권한 다이얼로그 직접 호출
+  static Future<bool> ensureLocationPermission(BuildContext context) async {
+    // 위치 서비스 활성화 확인
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return false;
+
+    // 현재 권한 상태 확인
+    var status = await Permission.locationWhenInUse.status;
+
+    if (status.isGranted) return true;
+    if (status.isPermanentlyDenied) return false;
+
+    // 전체화면 공개를 보여준 적이 있는지 확인
+    final disclosureShown = await LocationPermissionScreen.wasDisclosureShown();
+
+    if (!disclosureShown) {
+      // 첫 요청: 전체화면 설명 화면으로 이동 (내부에서 권한 요청까지 처리)
+      if (!context.mounted) return false;
+      final result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const LocationPermissionScreen(),
+        ),
+      );
+      return result == true;
+    }
+
+    // 이미 설명을 본 적 있으면 OS 권한 다이얼로그 직접 호출
+    final result = await Permission.locationWhenInUse.request();
+    return result.isGranted;
+  }
+
+  // 위치 권한 확인 (요청 X — 권한 공개/요청은 ensureLocationPermission에서 처리)
   Future<bool> checkAndRequestPermission() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      return false;
-    }
+    if (!serviceEnabled) return false;
 
     LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return false;
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
       return false;
     }
-
     return true;
   }
 
@@ -40,7 +71,9 @@ class MapService {
       }
 
       return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
     } catch (e) {
       print('Error getting current position: $e');

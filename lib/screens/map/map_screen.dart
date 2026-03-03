@@ -38,6 +38,8 @@ class _MapScreenState extends State<MapScreen> {
   Set<Polyline> _trailPolylines = {};
   bool _isLoadingTrail = false;
   bool _showOnlyBookmarked = false;
+  // 0=전체, 1=인증된 오름만, 2=미인증 오름만
+  int _certFilter = 0;
 
   // 시설물 팝업용
   FacilityPoint? _selectedFacility;
@@ -57,8 +59,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
-    // 지도 로드 전에 미리 위치 가져오기 시작
-    _loadCurrentLocation();
+    // 앱 시작 시 위치 권한 요청하지 않음 (Google Play 정책 준수)
   }
 
   @override
@@ -71,8 +72,8 @@ class _MapScreenState extends State<MapScreen> {
     _mapController = controller;
     _loadOreumMarkers();
 
-    // 내 위치 자동 로드
-    _loadCurrentLocation();
+    // 권한이 이미 있을 때만 위치 로드 (요청 안 함)
+    _loadCurrentLocationIfPermitted();
 
     // initialOreum이 있으면 해당 오름 선택 및 등산로 표시
     if (widget.initialOreum != null) {
@@ -82,7 +83,8 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  Future<void> _loadCurrentLocation() async {
+  /// 권한이 이미 있을 때만 위치 로드 (자동 호출용, 권한 요청 안 함)
+  Future<void> _loadCurrentLocationIfPermitted() async {
     final position = await _mapService.getCurrentPosition();
     if (position != null && mounted) {
       final userLatLng = LatLng(position.latitude, position.longitude);
@@ -131,9 +133,15 @@ class _MapScreenState extends State<MapScreen> {
 
   void _updateClusterer() {
     final oreumProvider = context.read<OreumProvider>();
-    final oreums = _showOnlyBookmarked
+    List<OreumModel> oreums = _showOnlyBookmarked
         ? oreumProvider.getBookmarkedOreums()
         : oreumProvider.oreums;
+
+    if (_certFilter == 1) {
+      oreums = oreums.where((o) => o.trailStatus == 'verified').toList();
+    } else if (_certFilter == 2) {
+      oreums = oreums.where((o) => o.trailStatus != 'verified').toList();
+    }
 
     final markers = <Marker>[];
 
@@ -216,6 +224,20 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  void _toggleCertFilter() {
+    setState(() {
+      _certFilter = (_certFilter + 1) % 3;
+    });
+    _updateClusterer();
+    final labels = ['모든 오름 표시', '인증된 오름만 표시', '미인증 오름만 표시'];
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(labels[_certFilter]),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
   void _showLoginRequiredDialog() {
     showDialog(
       context: context,
@@ -223,7 +245,7 @@ class _MapScreenState extends State<MapScreen> {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Text('로그인 필요'),
-          content: const Text('찜 기능을 사용하려면 로그인이 필요합니다.\n로그인 하시겠습니까?'),
+          content: const Text('이 기능을 사용하려면 로그인이 필요합니다.\n로그인 하시겠습니까?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -434,6 +456,10 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _moveToCurrentLocation() async {
+    // 사용자가 "내 위치" 버튼 탭 시에만 권한 요청 발생
+    final granted = await MapService.ensureLocationPermission(context);
+    if (!granted) return;
+
     final position = await _mapService.getCurrentPosition();
     if (position != null && _mapController != null) {
       final userLatLng = LatLng(position.latitude, position.longitude);
@@ -453,6 +479,13 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _startHiking(OreumModel oreum) async {
+    // 로그인 체크
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isLoggedIn) {
+      _showLoginRequiredDialog();
+      return;
+    }
+
     // 현재 위치 확인
     final position = await _mapService.getCurrentPosition();
 
@@ -1222,6 +1255,21 @@ class _MapScreenState extends State<MapScreen> {
             label: '찜',
             isActive: _showOnlyBookmarked,
             onTap: _toggleBookmarkFilter,
+          ),
+          const SizedBox(height: 8),
+          _buildMapButton(
+            icon: _certFilter == 1
+                ? Icons.verified
+                : _certFilter == 2
+                    ? Icons.verified_outlined
+                    : Icons.filter_alt_outlined,
+            label: _certFilter == 1
+                ? '인증됨'
+                : _certFilter == 2
+                    ? '미인증'
+                    : '인증',
+            isActive: _certFilter != 0,
+            onTap: _toggleCertFilter,
           ),
           const SizedBox(height: 8),
           _buildMapButton(

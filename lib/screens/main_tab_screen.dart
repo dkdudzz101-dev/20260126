@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'home/home_screen.dart';
 import 'community/community_screen.dart';
 import 'map/map_screen.dart';
@@ -15,6 +16,7 @@ import 'menu/settings_screen.dart';
 import '../theme/app_colors.dart';
 import '../providers/auth_provider.dart';
 import '../providers/stamp_provider.dart';
+import '../services/pedometer_service.dart';
 
 class MainTabScreen extends StatefulWidget {
   const MainTabScreen({super.key});
@@ -46,6 +48,15 @@ class _MainTabScreenState extends State<MainTabScreen> {
     // 로그인 상태면 스탬프 로드
     if (authProvider.isLoggedIn) {
       await stampProvider.loadStamps();
+    }
+
+    // 이미 권한이 허용된 경우 걸음수 서비스 초기화
+    // (권한 요청은 각 기능 사용 시점에 맥락에 맞게 처리)
+    if (!mounted) return;
+    final actStatus = await Permission.activityRecognition.status;
+    if (actStatus.isGranted && mounted) {
+      final pedometer = context.read<PedometerService>();
+      await pedometer.initialize();
     }
   }
 

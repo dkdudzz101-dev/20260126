@@ -372,14 +372,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Navigator.pop(context); // 로딩 닫기
 
               if (result['success'] == true) {
-                Navigator.pop(context); // 설정 화면 닫기
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('계정이 탈퇴되었습니다. 이용해주셔서 감사합니다.')),
-                );
+                if (context.mounted) {
+                  Navigator.pop(context); // 설정 화면 닫기
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('계정이 탈퇴되었습니다. 이용해주셔서 감사합니다.')),
+                  );
+                }
               } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(result['error'] ?? '탈퇴 처리 중 오류가 발생했습니다.')),
-                );
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(result['error'] ?? '탈퇴 처리 중 오류가 발생했습니다.')),
+                  );
+                }
               }
             },
             child: const Text('탈퇴하기'),

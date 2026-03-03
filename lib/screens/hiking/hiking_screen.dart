@@ -21,6 +21,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/stamp_provider.dart';
 import '../../widgets/hiking_share_card.dart';
 import '../oreum/oreum_error_report_screen.dart';
+import '../permission/background_location_permission_screen.dart';
 
 class HikingScreen extends StatefulWidget {
   final OreumModel oreum;
@@ -254,87 +255,25 @@ class _HikingScreenState extends State<HikingScreen> {
     super.dispose();
   }
 
-  /// 백그라운드 위치 권한 명시적 공개 다이얼로그 (Google Play 정책 필수)
+  /// 백그라운드 위치 권한 전체화면 공개 (Google Play 정책 필수)
   Future<bool> _requestBackgroundLocationWithDisclosure() async {
     // 이미 백그라운드 위치 권한이 있으면 바로 통과
     final bgStatus = await Permission.locationAlways.status;
     if (bgStatus.isGranted) return true;
 
-    // 먼저 포그라운드 위치 권한 확인
-    final fgStatus = await Permission.locationWhenInUse.status;
-    if (!fgStatus.isGranted) {
-      final fgResult = await Permission.locationWhenInUse.request();
-      if (!fgResult.isGranted) return false;
-    }
-
-    // 명시적 공개 다이얼로그 표시
-    final agreed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.location_on, color: AppColors.primary),
-            const SizedBox(width: 8),
-            const Text('백그라운드 위치 사용 안내'),
-          ],
-        ),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '제주오름 앱은 다음 목적으로 백그라운드에서 위치 정보를 수집합니다:',
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
-            SizedBox(height: 12),
-            Text('1. 등산 중 GPS 경로를 기록하여 이동 거리, 고도, 소요 시간을 측정합니다.'),
-            SizedBox(height: 8),
-            Text('2. 오름 정상 100m 이내 도달 시 자동으로 스탬프를 인증합니다.'),
-            SizedBox(height: 12),
-            Text(
-              '위치 데이터는 등산 기록 저장 목적으로만 사용되며, 등산을 종료하면 백그라운드 위치 수집이 즉시 중단됩니다.',
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            SizedBox(height: 12),
-            Text(
-              '다음 화면에서 위치 권한을 "항상 허용"으로 설정해주세요.',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('거부'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('동의 및 계속'),
-          ),
-        ],
+    // 전체화면 공개 화면으로 이동 (내부에서 포그라운드 + 백그라운드 권한 요청 처리)
+    if (!mounted) return false;
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const BackgroundLocationPermissionScreen(),
       ),
     );
-
-    if (agreed != true) return false;
-
-    // 시스템 권한 요청
-    final result = await Permission.locationAlways.request();
-    return result.isGranted;
+    return result == true;
   }
 
+  /// 권한이 이미 있을 때만 위치 로드 (initState용, 권한 요청 안 함)
   Future<void> _initializeLocation() async {
-    final hasPermission = await _mapService.checkAndRequestPermission();
-    if (!hasPermission) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('위치 권한이 필요합니다')),
-        );
-      }
-      return;
-    }
-
     final position = await _mapService.getCurrentPosition();
     if (position != null && mounted) {
       setState(() {
@@ -482,6 +421,31 @@ class _HikingScreenState extends State<HikingScreen> {
   }
 
   void _startHiking() async {
+    // 로그인 체크
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('로그인이 필요합니다')),
+      );
+      return;
+    }
+
+    // 1단계: 포그라운드 위치 권한 확보 (전체화면 공개 포함)
+    final fgGranted = await MapService.ensureLocationPermission(context);
+    if (!fgGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('등산을 시작하려면 위치 권한이 필요합니다')),
+        );
+      }
+      return;
+    }
+
+    // 2단계: 백그라운드 위치 권한 확보 (전체화면 공개 포함)
+    final bgGranted = await _requestBackgroundLocationWithDisclosure();
+
+    if (!mounted) return;
+
     // 시작 걸음수 기록
     final pedometer = context.read<PedometerService>();
     _startSteps = pedometer.todaySteps;
@@ -506,12 +470,10 @@ class _HikingScreenState extends State<HikingScreen> {
     // 시설물 마커 상태 유지 (선택된 마커 색상 유지)
     _buildFacilityMarkers();
 
-    // 백그라운드 위치 서비스 시작 (권한이 이미 있으면 자동 시작)
-    Permission.locationAlways.status.then((status) {
-      if (status.isGranted) {
-        BackgroundLocationService.startService();
-      }
-    });
+    // 백그라운드 서비스 시작 (권한 있을 때만)
+    if (bgGranted) {
+      BackgroundLocationService.startService();
+    }
 
     // 타이머 시작 (걸음수도 함께 업데이트)
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -1163,18 +1125,18 @@ class _HikingScreenState extends State<HikingScreen> {
       );
 
       final shareService = ShareService();
-      Navigator.pop(context); // 로딩 닫기
+      if (mounted) Navigator.pop(context); // 로딩 닫기
 
       await shareService.shareWidget(
         widget: shareWidget,
         oreumName: widget.oreum.name,
-        text: '${widget.oreum.name} 등반 완료! 🏔️\n거리: ${(_totalDistance / 1000).toStringAsFixed(2)}km\n시간: ${_formatDuration(_elapsedSeconds)}\n#제주오름 #등산',
+        text: '${widget.oreum.name} 등반 완료!\n거리: ${(_totalDistance / 1000).toStringAsFixed(2)}km\n시간: ${_formatDuration(_elapsedSeconds)}\n#제주오름 #등산',
       );
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context);
+        try { Navigator.pop(context); } catch (_) {}
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('공유 실패: $e')),
+          const SnackBar(content: Text('공유에 실패했습니다. 다시 시도해주세요.')),
         );
       }
     }

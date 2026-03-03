@@ -92,6 +92,8 @@ class StampProvider extends ChangeNotifier {
   double get totalDistance => _totalDistance;
   int get totalSteps => _totalSteps;
 
+  bool isStamped(String oreumId) => _stampedOreumIds.contains(oreumId);
+
   // 스탬프 목록 로드 (Supabase에서)
   Future<void> loadStamps() async {
     _isLoading = true;
@@ -130,13 +132,11 @@ class StampProvider extends ChangeNotifier {
       return false;
     }
 
+    // 공개/요청은 MainTabScreen에서만 처리 — 여기서는 현재 상태만 확인
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        _error = '위치 권한이 거부되었습니다';
-        return false;
-      }
+      _error = '위치 권한이 필요합니다. 앱을 재시작하여 권한을 허용해주세요.';
+      return false;
     }
 
     if (permission == LocationPermission.deniedForever) {
