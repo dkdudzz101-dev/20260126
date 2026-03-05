@@ -355,7 +355,7 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
                       if (oreum.difficulty != null)
                         _buildDifficultyBadge(oreum.difficulty!),
                       _buildTrailStatusBadge(oreum.trailStatus ?? 'checking'),
-                      _buildTrailDataBadge(oreum.geojsonPath != null),
+                      _buildTrailDataBadge(oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty),
                       if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
                         _buildRestrictionBadge(oreum.restriction!),
                       if (oreum.timeUp != null && oreum.timeUp! > 0)

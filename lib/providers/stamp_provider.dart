@@ -11,6 +11,8 @@ class StampModel {
   final double lat;
   final double lng;
   final String? stampUrl;
+  final String recordType; // 'stamp' 또는 'hiking_log'
+  String? memo; // 사용자 메모 (이름 옆에 표시)
 
   // 확장 필드
   final double? distanceWalked;
@@ -23,6 +25,12 @@ class StampModel {
   final double? maxAltitude;
   final double? minAltitude;
 
+  // 하산 데이터
+  final double? descentDistance;
+  final int? descentTime;
+  final int? descentSteps;
+  final int? descentCalories;
+
   static const String _storageBaseUrl = 'https://zsodcfgchbmmvpbwhuyu.supabase.co/storage/v1/object/public/oreum-data/';
 
   StampModel({
@@ -33,6 +41,8 @@ class StampModel {
     required this.lat,
     required this.lng,
     this.stampUrl,
+    this.recordType = 'stamp',
+    this.memo,
     this.distanceWalked,
     this.timeTaken,
     this.steps,
@@ -42,7 +52,20 @@ class StampModel {
     this.elevationLoss,
     this.maxAltitude,
     this.minAltitude,
+    this.descentDistance,
+    this.descentTime,
+    this.descentSteps,
+    this.descentCalories,
   });
+
+  bool get isStamp => recordType == 'stamp';
+  bool get isHikingLog => recordType == 'hiking_log';
+
+  // 총 거리 (등산 + 하산)
+  double? get totalDistance {
+    if (distanceWalked == null) return null;
+    return distanceWalked! + (descentDistance ?? 0);
+  }
 
   // 스탬프 이미지 URL (상대경로 → 전체 URL 변환)
   String? get imageUrl {
@@ -61,6 +84,8 @@ class StampModel {
       lat: (json['lat'] ?? 0.0).toDouble(),
       lng: (json['lng'] ?? 0.0).toDouble(),
       stampUrl: oreum?['stamp_url'],
+      recordType: json['record_type'] ?? 'stamp',
+      memo: json['memo'],
       distanceWalked: json['distance_walked']?.toDouble(),
       timeTaken: json['time_taken'],
       steps: json['steps'],
@@ -70,6 +95,10 @@ class StampModel {
       elevationLoss: json['elevation_loss']?.toDouble(),
       maxAltitude: json['max_altitude']?.toDouble(),
       minAltitude: json['min_altitude']?.toDouble(),
+      descentDistance: json['descent_distance']?.toDouble(),
+      descentTime: json['descent_time'],
+      descentSteps: json['descent_steps'],
+      descentCalories: json['descent_calories'],
     );
   }
 }
@@ -78,7 +107,7 @@ class StampProvider extends ChangeNotifier {
   final StampService _stampService = StampService();
 
   List<StampModel> _stamps = [];
-  Set<String> _stampedOreumIds = {};
+  Set<String> _stampedOreumIds = {}; // 완등(stamp)만
   bool _isLoading = false;
   String? _error;
   Position? _currentPosition;
@@ -86,9 +115,12 @@ class StampProvider extends ChangeNotifier {
   int _totalSteps = 0;
 
   List<StampModel> get stamps => _stamps;
+  List<StampModel> get stampOnly => _stamps.where((s) => s.isStamp).toList();
+  List<StampModel> get hikingLogOnly => _stamps.where((s) => s.isHikingLog).toList();
   bool get isLoading => _isLoading;
   String? get error => _error;
-  int get stampCount => _stamps.length;
+  int get stampCount => stampOnly.length; // 완등만 카운트
+  int get totalRecordCount => _stamps.length; // 전체 기록 수
   double get totalDistance => _totalDistance;
   int get totalSteps => _totalSteps;
 
@@ -107,10 +139,13 @@ class StampProvider extends ChangeNotifier {
       for (final data in stampData) {
         final stamp = StampModel.fromJson(data);
         _stamps.add(stamp);
-        _stampedOreumIds.add(stamp.oreumId);
+        // 완등(stamp)만 stampedOreumIds에 추가
+        if (stamp.isStamp) {
+          _stampedOreumIds.add(stamp.oreumId);
+        }
       }
-      // 가나다순 정렬
-      _stamps.sort((a, b) => a.oreumName.compareTo(b.oreumName));
+      // 날짜순 정렬 (최신순)
+      _stamps.sort((a, b) => b.stampedAt.compareTo(a.stampedAt));
 
       // 총 이동거리/걸음수 로드
       _totalDistance = await _stampService.getTotalDistance();
@@ -132,7 +167,6 @@ class StampProvider extends ChangeNotifier {
       return false;
     }
 
-    // 공개/요청은 MainTabScreen에서만 처리 — 여기서는 현재 상태만 확인
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       _error = '위치 권한이 필요합니다. 앱을 재시작하여 권한을 허용해주세요.';
@@ -170,8 +204,8 @@ class StampProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 이미 스탬프가 있는지 확인
-      if (_stamps.any((s) => s.oreumId == oreum.id)) {
+      // 이미 스탬프가 있는지 확인 (완등만)
+      if (_stamps.any((s) => s.oreumId == oreum.id && s.isStamp)) {
         return StampResult(
           success: false,
           message: '이미 이 오름의 스탬프를 획득했습니다',
@@ -189,7 +223,6 @@ class StampProvider extends ChangeNotifier {
 
       // 정상 좌표 확인
       if (oreum.summitLat == null || oreum.summitLng == null) {
-        // 정상 좌표가 없으면 입구 좌표로 확인
         if (oreum.startLat == null || oreum.startLng == null) {
           return StampResult(
             success: false,
@@ -238,6 +271,7 @@ class StampProvider extends ChangeNotifier {
         lat: position.latitude,
         lng: position.longitude,
         stampUrl: oreum.stampUrl,
+        recordType: 'stamp',
       );
 
       _stamps.add(stamp);
@@ -260,14 +294,15 @@ class StampProvider extends ChangeNotifier {
     }
   }
 
-  // 특정 오름의 스탬프 여부 확인
+  // 특정 오름의 스탬프(완등) 여부 확인
   bool hasStamp(String oreumId) {
-    return _stampedOreumIds.contains(oreumId) || _stamps.any((s) => s.oreumId == oreumId);
+    return _stampedOreumIds.contains(oreumId) ||
+        _stamps.any((s) => s.oreumId == oreumId && s.isStamp);
   }
 
-  // 수동 점검완료 시 GPS 확인 없이 스탬프 저장 (인증된 오름 + 인증순위 반영)
+  // 수동 점검완료 시 GPS 확인 없이 스탬프 저장
   Future<void> verifyAndStampManual(OreumModel oreum) async {
-    if (_stamps.any((s) => s.oreumId == oreum.id)) return;
+    if (_stamps.any((s) => s.oreumId == oreum.id && s.isStamp)) return;
 
     try {
       await _stampService.recordStamp(
@@ -287,6 +322,7 @@ class StampProvider extends ChangeNotifier {
       lat: oreum.summitLat ?? oreum.startLat ?? 0,
       lng: oreum.summitLng ?? oreum.startLng ?? 0,
       stampUrl: oreum.stampUrl,
+      recordType: 'stamp',
     );
 
     _stamps.add(stamp);

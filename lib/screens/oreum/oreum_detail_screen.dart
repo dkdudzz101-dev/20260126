@@ -119,15 +119,22 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     try {
       int successCount = 0;
       int failCount = 0;
+      final List<String> uploadedUrls = [];
 
       for (final file in pickedFiles) {
         try {
-          await _oreumService.uploadGalleryImage(oreum.id, file.path);
+          final url = await _oreumService.uploadGalleryImage(oreum.id, file.path);
+          uploadedUrls.add(url);
           successCount++;
         } catch (e) {
           failCount++;
           debugPrint('이미지 업로드 실패: $e');
         }
+      }
+
+      // 업로드된 이미지를 하나의 게시글로 등록
+      if (uploadedUrls.isNotEmpty) {
+        await _oreumService.createGalleryPost(oreum.id, uploadedUrls);
       }
 
       if (mounted) {
@@ -254,8 +261,8 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 _buildAppBarBadge(oreum.restriction!, Colors.red)
               else
                 _buildAppBarBadge(
-                  oreum.geojsonPath != null ? '등산로 있음' : '등산로 없음',
-                  oreum.geojsonPath != null ? Colors.blue : Colors.grey,
+                  (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty) ? '등산로 있음' : '등산로 없음',
+                  (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty) ? Colors.blue : Colors.grey,
                 ),
             ],
           ),

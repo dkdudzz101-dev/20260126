@@ -264,6 +264,7 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+
   Future<void> _findNearestOreum() async {
     // 로딩 표시
     showDialog(
@@ -1292,7 +1293,7 @@ class _MapScreenState extends State<MapScreen> {
   Widget _buildMyLocationButton() {
     return Positioned(
       right: 16,
-      top: MediaQuery.of(context).padding.top + 260,
+      top: MediaQuery.of(context).padding.top + 310,
       child: GestureDetector(
         onTap: _moveToCurrentLocation,
         child: Container(

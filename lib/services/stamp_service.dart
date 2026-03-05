@@ -43,7 +43,7 @@ class StampService {
       'descent_steps': descentSteps,
       'descent_calories': descentCalories,
       'completed_at': DateTime.now().toIso8601String(),
-    }).select('id').single();
+    }, onConflict: 'user_id,oreum_id').select('id').single();
 
     final stampId = response['id']?.toString();
 
@@ -51,6 +51,12 @@ class StampService {
     final totalDist = (distanceWalked ?? 0) + (descentDistance ?? 0);
     if (totalDist > 0) {
       await _updateTotalDistance(userId, totalDist);
+    }
+
+    // 총 걸음수 업데이트 (등산 + 하산)
+    final totalSteps = (steps ?? 0) + (descentSteps ?? 0);
+    if (totalSteps > 0) {
+      await _updateTotalSteps(userId, totalSteps);
     }
 
     // 뱃지 체크
@@ -330,52 +336,112 @@ class StampService {
     return List<Map<String, dynamic>>.from(response);
   }
 
-  // 총 이동거리 가져오기 (stamps 테이블에서 합산)
+  // 총 이동거리 가져오기 (stamps + hiking_logs 합산)
   Future<double> getTotalDistance() async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return 0.0;
 
     try {
-      final response = await _client
-          .from('stamps')
-          .select('distance_walked')
-          .eq('user_id', userId);
-
       double total = 0.0;
-      for (final row in response) {
-        final distance = row['distance_walked'];
-        if (distance != null) {
-          total += (distance as num).toDouble();
-        }
+
+      // stamps 거리
+      final stamps = await _client
+          .from('stamps')
+          .select('distance_walked, descent_distance')
+          .eq('user_id', userId);
+      for (final row in stamps) {
+        if (row['distance_walked'] != null) total += (row['distance_walked'] as num).toDouble();
+        if (row['descent_distance'] != null) total += (row['descent_distance'] as num).toDouble();
       }
+
+      // hiking_logs 거리
+      final logs = await _client
+          .from('hiking_logs')
+          .select('distance_walked, descent_distance')
+          .eq('user_id', userId);
+      for (final row in logs) {
+        if (row['distance_walked'] != null) total += (row['distance_walked'] as num).toDouble();
+        if (row['descent_distance'] != null) total += (row['descent_distance'] as num).toDouble();
+      }
+
       return total;
     } catch (e) {
       return 0.0;
     }
   }
 
-  // 총 걸음수 가져오기 (stamps 테이블에서 합산)
+  // 총 걸음수 가져오기 (stamps + hiking_logs 합산)
   Future<int> getTotalSteps() async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return 0;
 
     try {
-      final response = await _client
-          .from('stamps')
-          .select('steps')
-          .eq('user_id', userId);
-
       int total = 0;
-      for (final row in response) {
-        final steps = row['steps'];
-        if (steps != null) {
-          total += (steps as num).toInt();
-        }
+
+      // stamps 걸음수
+      final stamps = await _client
+          .from('stamps')
+          .select('steps, descent_steps')
+          .eq('user_id', userId);
+      for (final row in stamps) {
+        if (row['steps'] != null) total += (row['steps'] as num).toInt();
+        if (row['descent_steps'] != null) total += (row['descent_steps'] as num).toInt();
       }
+
+      // hiking_logs 걸음수
+      final logs = await _client
+          .from('hiking_logs')
+          .select('steps, descent_steps')
+          .eq('user_id', userId);
+      for (final row in logs) {
+        if (row['steps'] != null) total += (row['steps'] as num).toInt();
+        if (row['descent_steps'] != null) total += (row['descent_steps'] as num).toInt();
+      }
+
       return total;
     } catch (e) {
       return 0;
     }
+  }
+
+  // 최근 기록에 메모 추가
+  Future<void> updateLatestRecordMemo({
+    required String oreumId,
+    required String memo,
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    // stamps에서 최근 기록 찾기
+    try {
+      final stamp = await _client
+          .from('stamps')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('oreum_id', oreumId)
+          .maybeSingle();
+
+      if (stamp != null) {
+        await _client.from('stamps').update({'memo': memo}).eq('id', stamp['id']);
+        return;
+      }
+    } catch (_) {}
+
+    // hiking_logs에서 최근 기록 찾기
+    try {
+      final log = await _client
+          .from('hiking_logs')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('oreum_id', oreumId)
+          .order('hiked_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (log != null) {
+        await _client.from('hiking_logs').update({'memo': memo}).eq('id', log['id']);
+      }
+    } catch (_) {}
   }
 
   // 특정 오름의 인증자 목록 (순위 포함, 완등 시각 순)

@@ -174,7 +174,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildProfileCard(BuildContext context) {
     final authProvider = context.watch<AuthProvider>();
     final stampProvider = context.watch<StampProvider>();
-    final level = (stampProvider.stampCount ~/ 10) + 1;
+    final level = stampProvider.stampCount;
 
     // 로그인 안했을 때
     if (!authProvider.isLoggedIn) {
@@ -1258,14 +1258,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
+                          color: stamp.isStamp
+                              ? AppColors.primary.withOpacity(0.1)
+                              : Colors.orange.withOpacity(0.1),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.verified, color: AppColors.primary),
+                        child: Icon(
+                          stamp.isStamp ? Icons.verified : Icons.hiking,
+                          color: stamp.isStamp ? AppColors.primary : Colors.orange,
+                        ),
                       ),
-                      title: Text(stamp.oreumName),
+                      title: Text(
+                        stamp.memo != null && stamp.memo!.isNotEmpty
+                            ? '${stamp.oreumName} - ${stamp.memo}'
+                            : stamp.oreumName,
+                      ),
                       subtitle: Text(
-                        '${stamp.stampedAt.year}.${stamp.stampedAt.month}.${stamp.stampedAt.day}',
+                        '${stamp.stampedAt.year}.${stamp.stampedAt.month}.${stamp.stampedAt.day}'
+                        '${stamp.distanceWalked != null ? ' · ${(stamp.distanceWalked! / 1000).toStringAsFixed(1)}km' : ''}',
                       ),
                       trailing: const Icon(Icons.chevron_right, color: AppColors.textHint),
                       onTap: () {

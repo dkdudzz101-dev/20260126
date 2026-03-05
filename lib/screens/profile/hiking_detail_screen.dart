@@ -31,7 +31,15 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
 
   Future<void> _loadRoute() async {
     try {
-      final data = await _routeService.getRouteWithPhotos(widget.stamp.id);
+      Map<String, dynamic>? data;
+
+      // record_type에 따라 적절한 방법으로 경로 조회
+      if (widget.stamp.isHikingLog) {
+        data = await _routeService.getRouteByLogId(widget.stamp.id);
+      } else {
+        data = await _routeService.getRouteWithPhotos(widget.stamp.id);
+      }
+
       if (mounted) {
         setState(() {
           if (data != null) {
@@ -148,9 +156,14 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final stamp = widget.stamp;
+    final title = stamp.memo != null && stamp.memo!.isNotEmpty
+        ? '${stamp.oreumName} - ${stamp.memo}'
+        : stamp.oreumName;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.stamp.oreumName),
+        title: Text(title),
         actions: [
           IconButton(
             icon: const Icon(Icons.share),
@@ -191,7 +204,7 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
           .toList();
 
       if (points.isNotEmpty) {
-        center = points[points.length ~/ 2]; // 중앙 지점
+        center = points[points.length ~/ 2];
 
         polylines.add(Polyline(
           polylineId: 'route',
@@ -224,24 +237,46 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 날짜
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              dateStr,
-              style: const TextStyle(
-                color: AppColors.primary,
-                fontWeight: FontWeight.w600,
+          // 날짜 + 기록 타입 배지
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  dateStr,
+                  style: const TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: stamp.isStamp
+                      ? Colors.green.withOpacity(0.1)
+                      : Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  stamp.isStamp ? '완등' : '등산 기록',
+                  style: TextStyle(
+                    color: stamp.isStamp ? Colors.green : Colors.orange,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
 
-          // 메인 통계
+          // 통계
           Row(
             children: [
               Expanded(child: _buildMainStatCard('이동 거리', _formatDistance(stamp.distanceWalked), Icons.straighten)),
@@ -257,6 +292,53 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
               Expanded(child: _buildMainStatCard('평균 속도', stamp.avgSpeed != null ? '${stamp.avgSpeed!.toStringAsFixed(1)} km/h' : '-', Icons.speed)),
             ],
           ),
+
+          // 고도 정보
+          if (stamp.elevationGain != null || stamp.maxAltitude != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.terrain, color: AppColors.primary),
+                      SizedBox(width: 8),
+                      Text('고도 정보', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      if (stamp.maxAltitude != null)
+                        Expanded(child: _buildMiniStat('최고 고도', '${stamp.maxAltitude!.toStringAsFixed(0)}m')),
+                      if (stamp.minAltitude != null)
+                        Expanded(child: _buildMiniStat('최저 고도', '${stamp.minAltitude!.toStringAsFixed(0)}m')),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      if (stamp.elevationGain != null)
+                        Expanded(child: _buildMiniStat('누적 상승', '+${stamp.elevationGain!.toStringAsFixed(0)}m')),
+                      if (stamp.elevationLoss != null)
+                        Expanded(child: _buildMiniStat('누적 하강', '-${stamp.elevationLoss!.toStringAsFixed(0)}m')),
+                    ],
+                  ),
+                  if (stamp.calories != null) ...[
+                    const SizedBox(height: 8),
+                    _buildMiniStat('소모 칼로리', '${stamp.calories} kcal'),
+                  ],
+                ],
+              ),
+            ),
+          ],
 
           // 등반 사진
           if (_photoUrls != null && _photoUrls!.isNotEmpty) ...[
@@ -343,6 +425,16 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMiniStat(String label, String value) {
+    return Column(
+      children: [
+        Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+      ],
     );
   }
 

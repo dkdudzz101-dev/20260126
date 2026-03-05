@@ -231,69 +231,110 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
   void _showOreumPicker() {
     final oreums = context.read<OreumProvider>().allOreums;
+    final searchController = TextEditingController();
+    List<dynamic> filtered = List.from(oreums);
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return Container(
-          height: 400,
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '오름 선택',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: oreums.length + 1,
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: AppColors.surface,
-                          child: const Icon(Icons.all_inclusive, color: AppColors.primary),
-                        ),
-                        title: const Text('전체 오름'),
-                        onTap: () {
-                          _onOreumSelected(null, null);
-                          Navigator.pop(context);
-                        },
-                      );
-                    }
-                    final oreum = oreums[index - 1];
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: AppColors.surface,
-                        child: const Icon(Icons.terrain, color: AppColors.primary),
-                      ),
-                      title: Text(oreum.name),
-                      subtitle: oreum.difficulty != null
-                          ? Text(oreum.difficulty!)
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.6,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.border,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '오름 선택',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  // 검색 필드
+                  TextField(
+                    controller: searchController,
+                    decoration: InputDecoration(
+                      hintText: '오름 이름 검색',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: searchController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                searchController.clear();
+                                setModalState(() {
+                                  filtered = List.from(oreums);
+                                });
+                              },
+                            )
                           : null,
-                      onTap: () {
-                        _onOreumSelected(oreum.id, oreum.name);
-                        Navigator.pop(context);
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onChanged: (query) {
+                      setModalState(() {
+                        if (query.isEmpty) {
+                          filtered = List.from(oreums);
+                        } else {
+                          filtered = oreums
+                              .where((o) => o.name.contains(query))
+                              .toList();
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: filtered.length + 1,
+                      itemBuilder: (context, index) {
+                        if (index == 0) {
+                          return ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: AppColors.surface,
+                              child: const Icon(Icons.all_inclusive, color: AppColors.primary),
+                            ),
+                            title: const Text('전체 오름'),
+                            onTap: () {
+                              _onOreumSelected(null, null);
+                              Navigator.pop(context);
+                            },
+                          );
+                        }
+                        final oreum = filtered[index - 1];
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: AppColors.surface,
+                            child: const Icon(Icons.terrain, color: AppColors.primary),
+                          ),
+                          title: Text(oreum.name),
+                          subtitle: oreum.difficulty != null
+                              ? Text(oreum.difficulty!)
+                              : null,
+                          onTap: () {
+                            _onOreumSelected(oreum.id, oreum.name);
+                            Navigator.pop(context);
+                          },
+                        );
                       },
-                    );
-                  },
-                ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -634,16 +675,18 @@ class _WritePostSheetState extends State<WritePostSheet> {
       return;
     }
 
-    final picked = await _imagePicker.pickImage(
-      source: ImageSource.gallery,
+    final remaining = 5 - _selectedImages.length;
+    final picked = await _imagePicker.pickMultiImage(
       maxWidth: 1200,
       maxHeight: 1200,
       imageQuality: 80,
     );
 
-    if (picked != null) {
+    if (picked.isNotEmpty) {
       setState(() {
-        _selectedImages.add(File(picked.path));
+        for (final img in picked.take(remaining)) {
+          _selectedImages.add(File(img.path));
+        }
       });
     }
   }
@@ -655,6 +698,7 @@ class _WritePostSheetState extends State<WritePostSheet> {
   }
 
   Future<void> _submitPost() async {
+    if (_isUploading) return; // 중복 제출 방지
     if (_contentController.text.trim().isEmpty) return;
 
     // 콘텐츠 필터 체크
@@ -706,7 +750,7 @@ class _WritePostSheetState extends State<WritePostSheet> {
         }
       }
 
-      widget.onSubmit(
+      await widget.onSubmit(
         content,
         _selectedOreumId,
         _selectedOreumName,

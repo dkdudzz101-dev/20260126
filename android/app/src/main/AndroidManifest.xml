@@ -16,6 +16,9 @@
     <!-- 걸음수 측정 (Activity Recognition) -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"/>
 
+    <!-- 카메라 (AR 오름 표시) -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
     <application
         android:label="제주오름"
         android:name="${applicationName}"

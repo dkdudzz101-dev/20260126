@@ -17,6 +17,7 @@ import '../../services/share_service.dart';
 import '../../services/background_location_service.dart';
 import '../../utils/calorie_calculator.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/stamp_provider.dart';
 import '../../widgets/hiking_share_card.dart';
@@ -32,7 +33,7 @@ class HikingScreen extends StatefulWidget {
   State<HikingScreen> createState() => _HikingScreenState();
 }
 
-class _HikingScreenState extends State<HikingScreen> {
+class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver {
   final MapService _mapService = MapService();
   final StampService _stampService = StampService();
   final TrailService _trailService = TrailService();
@@ -81,6 +82,7 @@ class _HikingScreenState extends State<HikingScreen> {
 
   // 하산 모드
   bool _isDescending = false;
+  bool _isFacilityPanelOpen = true;
   bool _descentCompleted = false;
   double _descentDistance = 0;
   int _descentSeconds = 0;
@@ -115,8 +117,10 @@ class _HikingScreenState extends State<HikingScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeLocation();
     _loadTrail(); // 등산로 로드
+    _restoreHikingState(); // 저장된 등산 상태 복원
   }
 
   // 시설물 마커 이미지 (SVG data URL)
@@ -245,6 +249,7 @@ class _HikingScreenState extends State<HikingScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _mapService.stopTracking();
     _mapService.dispose();
@@ -253,6 +258,170 @@ class _HikingScreenState extends State<HikingScreen> {
       BackgroundLocationService.stopService();
     }
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      // 앱이 백그라운드로 갈 때 (전화, 홈버튼 등) 상태 저장
+      if (_isHiking) {
+        _saveHikingState();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      // 앱이 다시 포그라운드로 돌아올 때
+      if (_isHiking) {
+        debugPrint('등산 기록 유지 중 - 앱 복귀');
+      }
+    }
+  }
+
+  // 등산 상태 저장 (전화/백그라운드 시)
+  Future<void> _saveHikingState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('hiking_active', true);
+      await prefs.setString('hiking_oreum_id', widget.oreum.id);
+      await prefs.setDouble('hiking_distance', _totalDistance);
+      await prefs.setInt('hiking_seconds', _elapsedSeconds);
+      await prefs.setInt('hiking_steps', _hikingSteps);
+      await prefs.setInt('hiking_start_steps', _startSteps);
+      await prefs.setDouble('hiking_max_alt', _maxAltitude);
+      await prefs.setDouble('hiking_min_alt', _minAltitude == double.infinity ? 0 : _minAltitude);
+      await prefs.setDouble('hiking_elev_gain', _elevationGain);
+      await prefs.setDouble('hiking_elev_loss', _elevationLoss);
+      await prefs.setDouble('hiking_last_alt', _lastAltitude);
+      await prefs.setBool('hiking_reached_summit', _reachedSummit);
+      await prefs.setInt('hiking_calories', _calculatedCalories);
+      await prefs.setBool('hiking_is_descending', _isDescending);
+      await prefs.setDouble('hiking_descent_dist', _descentDistance);
+      await prefs.setInt('hiking_descent_secs', _descentSeconds);
+      await prefs.setInt('hiking_descent_steps', _descentSteps);
+      await prefs.setDouble('hiking_ascent_dist', _ascentDistance);
+      await prefs.setInt('hiking_ascent_secs', _ascentSeconds);
+      await prefs.setInt('hiking_ascent_steps', _ascentSteps);
+      // 저장 시각 기록 (복원 시 경과 시간 보정용)
+      await prefs.setInt('hiking_saved_at', DateTime.now().millisecondsSinceEpoch);
+      // GPS 경로 저장 (최근 포인트들)
+      final positionData = _trackPositions.map((p) =>
+        '${p.latitude},${p.longitude},${p.altitude},${p.timestamp.toIso8601String()}'
+      ).toList();
+      await prefs.setStringList('hiking_positions', positionData);
+      debugPrint('등산 상태 저장 완료 (거리: ${_totalDistance}m, 시간: ${_elapsedSeconds}s)');
+    } catch (e) {
+      debugPrint('등산 상태 저장 실패: $e');
+    }
+  }
+
+  // 등산 상태 복원
+  Future<void> _restoreHikingState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final isActive = prefs.getBool('hiking_active') ?? false;
+      final savedOreumId = prefs.getString('hiking_oreum_id') ?? '';
+
+      if (!isActive || savedOreumId != widget.oreum.id) return;
+
+      final savedAt = prefs.getInt('hiking_saved_at') ?? 0;
+      if (savedAt == 0) return;
+
+      // 경과 시간 보정
+      final elapsed = DateTime.now().millisecondsSinceEpoch - savedAt;
+      final additionalSeconds = elapsed ~/ 1000;
+
+      if (!mounted) return;
+
+      setState(() {
+        _isHiking = true;
+        _totalDistance = prefs.getDouble('hiking_distance') ?? 0;
+        _elapsedSeconds = (prefs.getInt('hiking_seconds') ?? 0) + additionalSeconds;
+        _hikingSteps = prefs.getInt('hiking_steps') ?? 0;
+        _startSteps = prefs.getInt('hiking_start_steps') ?? 0;
+        _maxAltitude = prefs.getDouble('hiking_max_alt') ?? 0;
+        final savedMinAlt = prefs.getDouble('hiking_min_alt') ?? 0;
+        _minAltitude = savedMinAlt == 0 ? double.infinity : savedMinAlt;
+        _elevationGain = prefs.getDouble('hiking_elev_gain') ?? 0;
+        _elevationLoss = prefs.getDouble('hiking_elev_loss') ?? 0;
+        _lastAltitude = prefs.getDouble('hiking_last_alt') ?? 0;
+        _reachedSummit = prefs.getBool('hiking_reached_summit') ?? false;
+        _calculatedCalories = prefs.getInt('hiking_calories') ?? 0;
+        _isDescending = prefs.getBool('hiking_is_descending') ?? false;
+        _descentDistance = prefs.getDouble('hiking_descent_dist') ?? 0;
+        _descentSeconds = (prefs.getInt('hiking_descent_secs') ?? 0) + (_isDescending ? additionalSeconds : 0);
+        _descentSteps = prefs.getInt('hiking_descent_steps') ?? 0;
+        _ascentDistance = prefs.getDouble('hiking_ascent_dist') ?? 0;
+        _ascentSeconds = prefs.getInt('hiking_ascent_secs') ?? 0;
+        _ascentSteps = prefs.getInt('hiking_ascent_steps') ?? 0;
+      });
+
+      // GPS 경로 복원
+      final positionData = prefs.getStringList('hiking_positions') ?? [];
+      for (final data in positionData) {
+        final parts = data.split(',');
+        if (parts.length >= 3) {
+          _trackPositions.add(Position(
+            latitude: double.parse(parts[0]),
+            longitude: double.parse(parts[1]),
+            altitude: double.parse(parts[2]),
+            timestamp: parts.length >= 4 ? DateTime.parse(parts[3]) : DateTime.now(),
+            accuracy: 0,
+            altitudeAccuracy: 0,
+            heading: 0,
+            headingAccuracy: 0,
+            speed: 0,
+            speedAccuracy: 0,
+          ));
+        }
+      }
+
+      // 경로 폴리라인 복원
+      _updateTrackPolyline();
+
+      // 걸음수 서비스 재시작
+      final actStatus = await Permission.activityRecognition.status;
+      if (actStatus.isGranted && mounted) {
+        final pedometer = context.read<PedometerService>();
+        if (!pedometer.isInitialized) {
+          await pedometer.initialize();
+        }
+        _startSteps = pedometer.todaySteps - _hikingSteps;
+      }
+
+      // 타이머 재시작
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!_isPaused) {
+          final currentSteps = context.read<PedometerService>().todaySteps;
+          setState(() {
+            _elapsedSeconds++;
+            _hikingSteps = currentSteps - _startSteps;
+            if (_hikingSteps < 0) _hikingSteps = 0;
+
+            if (_isDescending) {
+              _descentSeconds++;
+              _descentSteps = currentSteps - _descentStartSteps;
+              if (_descentSteps < 0) _descentSteps = 0;
+            }
+          });
+        }
+      });
+
+      // GPS 추적 재시작
+      _mapService.startTracking(onPositionUpdate: _onPositionUpdate);
+
+      debugPrint('등산 상태 복원 완료');
+    } catch (e) {
+      debugPrint('등산 상태 복원 실패: $e');
+      await _clearHikingState();
+    }
+  }
+
+  // 저장된 등산 상태 삭제
+  Future<void> _clearHikingState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getKeys().where((k) => k.startsWith('hiking_'));
+    for (final key in keys) {
+      await prefs.remove(key);
+    }
   }
 
   /// 백그라운드 위치 권한 전체화면 공개 (Google Play 정책 필수)
@@ -443,6 +612,17 @@ class _HikingScreenState extends State<HikingScreen> {
 
     // 2단계: 백그라운드 위치 권한 확보 (전체화면 공개 포함)
     final bgGranted = await _requestBackgroundLocationWithDisclosure();
+
+    if (!mounted) return;
+
+    // 걸음수 권한 요청 및 초기화
+    final actStatus = await Permission.activityRecognition.request();
+    if (actStatus.isGranted && mounted) {
+      final pedometer = context.read<PedometerService>();
+      if (!pedometer.isInitialized) {
+        await pedometer.initialize();
+      }
+    }
 
     if (!mounted) return;
 
@@ -725,16 +905,26 @@ class _HikingScreenState extends State<HikingScreen> {
 
   Future<void> _completeHiking() async {
     if (_isCompleted) return;
+    _isCompleted = true; // 즉시 설정하여 중복 호출 방지
 
     _timer?.cancel();
+    await _clearHikingState(); // 저장된 임시 상태 삭제
     _mapService.stopTracking();
+
+    // 저장 중 로딩 표시
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+    }
 
     // 백그라운드 위치 서비스 종료
     await BackgroundLocationService.stopService();
 
     setState(() {
       _isHiking = false;
-      _isCompleted = true;
     });
 
     // 하산 중이었다면 등산 데이터는 스냅샷 사용
@@ -821,9 +1011,15 @@ class _HikingScreenState extends State<HikingScreen> {
         }
       } catch (e) {
         debugPrint('등반 기록 저장 실패: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('기록 저장 실패: $e'), duration: const Duration(seconds: 5)),
+          );
+        }
       }
 
       if (mounted) {
+        Navigator.pop(context); // 로딩 닫기
         _showIncompleteDialog();
       }
       return;
@@ -863,10 +1059,12 @@ class _HikingScreenState extends State<HikingScreen> {
       }
 
       if (mounted) {
+        Navigator.pop(context); // 로딩 닫기
         _showCompletionDialog();
       }
     } catch (e) {
       if (mounted) {
+        Navigator.pop(context); // 로딩 닫기
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('저장 오류: $e')),
         );
@@ -877,6 +1075,7 @@ class _HikingScreenState extends State<HikingScreen> {
   void _showIncompleteDialog() {
     final ascentDist = _isDescending ? _ascentDistance : _totalDistance;
     final ascentSecs = _isDescending ? _ascentSeconds : _elapsedSeconds;
+    final memoController = TextEditingController();
 
     showDialog(
       context: context,
@@ -894,11 +1093,24 @@ class _HikingScreenState extends State<HikingScreen> {
               ),
               const SizedBox(height: 16),
               const Text(
-                '정상을 지나지 않아\n완등으로 기록되지 않았어요.',
+                '정상을 지나지 않아\n완등으로 기록되지 않았어요.\n등산 기록은 저장됩니다.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              // 메모 입력
+              TextField(
+                controller: memoController,
+                decoration: InputDecoration(
+                  hintText: '메모 추가 (예: 산책만)',
+                  prefixIcon: const Icon(Icons.edit_note, size: 20),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                maxLength: 30,
+              ),
+              const SizedBox(height: 8),
               _buildStatRow('등산 거리', '${(ascentDist / 1000).toStringAsFixed(2)} km'),
               _buildStatRow('등산 시간', _formatDuration(ascentSecs)),
               if (_isDescending && _descentDistance > 0) ...[
@@ -915,6 +1127,10 @@ class _HikingScreenState extends State<HikingScreen> {
         actions: [
           ElevatedButton(
             onPressed: () {
+              final memo = memoController.text.trim();
+              if (memo.isNotEmpty) {
+                _saveMemo(memo);
+              }
               Navigator.pop(context);
               Navigator.pop(context);
             },
@@ -929,6 +1145,7 @@ class _HikingScreenState extends State<HikingScreen> {
     final ascentDist = _isDescending ? _ascentDistance : _totalDistance;
     final ascentSecs = _isDescending ? _ascentSeconds : _elapsedSeconds;
     final ascentStepsVal = _isDescending ? _ascentSteps : _hikingSteps;
+    final memoController = TextEditingController();
 
     showDialog(
       context: context,
@@ -952,7 +1169,20 @@ class _HikingScreenState extends State<HikingScreen> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              // 메모 입력
+              TextField(
+                controller: memoController,
+                decoration: InputDecoration(
+                  hintText: '메모 추가 (예: 친구와 함께)',
+                  prefixIcon: const Icon(Icons.edit_note, size: 20),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                maxLength: 30,
+              ),
+              const SizedBox(height: 8),
               // 등산 통계
               if (_isDescending) ...[
                 const Align(
@@ -1001,6 +1231,11 @@ class _HikingScreenState extends State<HikingScreen> {
           ),
           ElevatedButton(
             onPressed: () {
+              // 메모 저장
+              final memo = memoController.text.trim();
+              if (memo.isNotEmpty) {
+                _saveMemo(memo);
+              }
               Navigator.pop(context);
               Navigator.pop(context);
             },
@@ -1512,6 +1747,18 @@ class _HikingScreenState extends State<HikingScreen> {
     }
   }
 
+  // 메모 저장 (최근 저장된 기록에 memo 추가)
+  Future<void> _saveMemo(String memo) async {
+    try {
+      await _stampService.updateLatestRecordMemo(
+        oreumId: widget.oreum.id,
+        memo: memo,
+      );
+    } catch (e) {
+      debugPrint('메모 저장 실패: $e');
+    }
+  }
+
   Widget _buildStatRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1570,7 +1817,14 @@ class _HikingScreenState extends State<HikingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: !_isHiking,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _isHiking) {
+          _stopHiking();
+        }
+      },
+      child: Scaffold(
       body: Stack(
         children: [
           // 지도 (캡처용 RepaintBoundary)
@@ -1632,6 +1886,7 @@ class _HikingScreenState extends State<HikingScreen> {
           _buildBottomControls(),
         ],
       ),
+    ),
     );
   }
 
@@ -2197,107 +2452,137 @@ class _HikingScreenState extends State<HikingScreen> {
     }
   }
 
-  // 시설물 목록 패널
+  // 시설물 목록 패널 (접기/펼치기)
   Widget _buildFacilityListPanel() {
-    // _currentFacilities는 이미 '기타' 제외됨
     if (_currentFacilities.isEmpty) return const SizedBox.shrink();
 
     return Positioned(
       left: 12,
       top: MediaQuery.of(context).padding.top + (_isHiking ? 160 : 80),
-      child: Container(
-        constraints: const BoxConstraints(maxHeight: 250),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 10,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 패널 본체
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: _isFacilityPanelOpen ? null : 0,
+            constraints: BoxConstraints(
+              maxHeight: 250,
+              maxWidth: _isFacilityPanelOpen ? 160 : 0,
             ),
-          ],
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.place, size: 16, color: AppColors.primary),
-                    const SizedBox(width: 4),
-                    Text(
-                      '시설물 (${_currentFacilities.length})',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              ..._currentFacilities.asMap().entries.map((entry) {
-                final index = entry.key;
-                final facility = entry.value;
-                final isSelected = _selectedFacility == facility;
-                return InkWell(
-                  onTap: () {
-                    // 목록에서 클릭할 때만 지도 이동
-                    _mapController?.setCenter(facility.location);
-                    setState(() {
-                      _selectedFacility = facility;
-                    });
-                    // 마커 색상 업데이트
-                    _buildFacilityMarkers();
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            clipBehavior: Clip.hardEdge,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: _isFacilityPanelOpen
+                  ? [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10)]
+                  : [],
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: isSelected ? Colors.red.withOpacity(0.15) : null,
-                      border: Border(
-                        left: isSelected
-                            ? const BorderSide(color: Colors.red, width: 3)
-                            : BorderSide.none,
-                        bottom: BorderSide(
-                          color: index < _currentFacilities.length - 1
-                              ? AppColors.border
-                              : Colors.transparent,
-                          width: 0.5,
-                        ),
-                      ),
+                      color: AppColors.primary.withOpacity(0.1),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          _getFacilityIcon(facility.type),
-                          size: isSelected ? 20 : 18,
-                          color: isSelected ? Colors.red : AppColors.textSecondary,
-                        ),
-                        const SizedBox(width: 8),
+                        const Icon(Icons.place, size: 16, color: AppColors.primary),
+                        const SizedBox(width: 4),
                         Text(
-                          facility.type,
-                          style: TextStyle(
-                            fontSize: isSelected ? 14 : 13,
-                            color: isSelected ? Colors.red : AppColors.textPrimary,
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          '시설물 (${_currentFacilities.length})',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
                           ),
                         ),
                       ],
                     ),
                   ),
-                );
-              }),
-            ],
+                  ..._currentFacilities.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final facility = entry.value;
+                    final isSelected = _selectedFacility == facility;
+                    return InkWell(
+                      onTap: () {
+                        _mapController?.setCenter(facility.location);
+                        setState(() {
+                          _selectedFacility = facility;
+                        });
+                        _buildFacilityMarkers();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.red.withOpacity(0.15) : null,
+                          border: Border(
+                            left: isSelected
+                                ? const BorderSide(color: Colors.red, width: 3)
+                                : BorderSide.none,
+                            bottom: BorderSide(
+                              color: index < _currentFacilities.length - 1
+                                  ? AppColors.border
+                                  : Colors.transparent,
+                              width: 0.5,
+                            ),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _getFacilityIcon(facility.type),
+                              size: isSelected ? 20 : 18,
+                              color: isSelected ? Colors.red : AppColors.textSecondary,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              facility.type,
+                              style: TextStyle(
+                                fontSize: isSelected ? 14 : 13,
+                                color: isSelected ? Colors.red : AppColors.textPrimary,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
           ),
-        ),
+          // 접기/펼치기 버튼
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _isFacilityPanelOpen = !_isFacilityPanelOpen;
+              });
+            },
+            child: Container(
+              margin: const EdgeInsets.only(left: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 6),
+                ],
+              ),
+              child: Icon(
+                _isFacilityPanelOpen ? Icons.chevron_left : Icons.chevron_right,
+                size: 18,
+                color: AppColors.primary,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

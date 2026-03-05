@@ -28,7 +28,7 @@ class HikingRouteService {
       'lat': p.latitude,
       'lng': p.longitude,
       'altitude': p.altitude,
-      'timestamp': p.timestamp?.toIso8601String(),
+      'timestamp': p.timestamp.toIso8601String(),
       'accuracy': p.accuracy,
       'speed': p.speed,
     }).toList();

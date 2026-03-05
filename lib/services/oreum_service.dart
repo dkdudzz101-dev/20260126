@@ -236,6 +236,7 @@ class OreumService {
   }
 
   // 사용자 갤러리 이미지 업로드 (posts 버킷 사용 + 커뮤니티 게시글로 등록)
+  /// 갤러리 이미지 1장 업로드 (스토리지만, 게시글 X)
   Future<String> uploadGalleryImage(String oreumId, String filePath) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw Exception('로그인이 필요합니다');
@@ -244,36 +245,31 @@ class OreumService {
     final fileName = 'gallery_${oreumId}_$timestamp.jpg';
     final storagePath = 'images/$fileName';
 
-    print('Uploading gallery image: $storagePath');
+    final file = File(filePath);
+    final bytes = await file.readAsBytes();
 
-    try {
-      final file = File(filePath);
-      final bytes = await file.readAsBytes();
-      print('File size: ${bytes.length} bytes');
+    await _client.storage
+        .from('posts')
+        .uploadBinary(storagePath, bytes, fileOptions: const FileOptions(
+          contentType: 'image/jpeg',
+        ));
 
-      await _client.storage
-          .from('posts')
-          .uploadBinary(storagePath, bytes, fileOptions: const FileOptions(
-            contentType: 'image/jpeg',
-          ));
+    return _client.storage.from('posts').getPublicUrl(storagePath);
+  }
 
-      final url = _client.storage.from('posts').getPublicUrl(storagePath);
-      print('Upload success: $url');
+  /// 갤러리 이미지 여러장을 하나의 게시글로 등록
+  Future<void> createGalleryPost(String oreumId, List<String> imageUrls) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('로그인이 필요합니다');
+    if (imageUrls.isEmpty) return;
 
-      // 커뮤니티 게시글로 자동 등록 (갤러리 사진)
-      await _client.from('posts').insert({
-        'user_id': userId,
-        'oreum_id': oreumId,
-        'content': '📷 갤러리 사진',
-        'category': 'gallery',
-        'images': [url],
-      });
-
-      return url;
-    } catch (e) {
-      print('Upload error: $e');
-      rethrow;
-    }
+    await _client.from('posts').insert({
+      'user_id': userId,
+      'oreum_id': oreumId,
+      'content': '📷 갤러리 사진',
+      'category': 'gallery',
+      'images': imageUrls,
+    });
   }
 
   // 갤러리 사진 삭제 (본인 사진만)
