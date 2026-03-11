@@ -33,7 +33,7 @@ class NoticeService {
           .from('notices')
           .select()
           .eq('id', noticeId)
-          .single();
+          .maybeSingle();
       return response;
     } catch (e) {
       return null;
@@ -48,7 +48,7 @@ class NoticeService {
           .select()
           .order('created_at', ascending: false)
           .limit(1)
-          .single();
+          .maybeSingle();
       return response;
     } catch (e) {
       return null;

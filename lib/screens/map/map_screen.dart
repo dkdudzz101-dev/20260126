@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'package:provider/provider.dart';
@@ -5,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/oreum_provider.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/stamp_provider.dart';
 import '../../models/oreum_model.dart';
 import '../../services/map_service.dart';
 import '../../services/weather_service.dart';
@@ -12,6 +14,10 @@ import '../../services/trail_service.dart';
 import '../oreum/oreum_detail_screen.dart';
 import '../oreum/oreum_search_screen.dart';
 import '../hiking/hiking_screen.dart';
+import '../ar/ar_camera_screen.dart';
+import '../exercise/exercise_screen.dart';
+import '../../services/inquiry_service.dart';
+import '../../utils/login_guard.dart';
 
 class MapScreen extends StatefulWidget {
   final OreumModel? initialOreum;
@@ -38,8 +44,10 @@ class _MapScreenState extends State<MapScreen> {
   Set<Polyline> _trailPolylines = {};
   bool _isLoadingTrail = false;
   bool _showOnlyBookmarked = false;
-  // 0=전체, 1=인증된 오름만, 2=미인증 오름만
+  // 0=전체, 1=누군가 인증한 오름, 2=아무도 인증 안 한 오름, 3=내가 인증, 4=내가 미인증
   int _certFilter = 0;
+  // 난이도 필터: null=전체, '쉬움', '보통', '어려움'
+  String? _difficultyFilter;
 
   // 시설물 팝업용
   FacilityPoint? _selectedFacility;
@@ -51,6 +59,7 @@ class _MapScreenState extends State<MapScreen> {
   // 현재 위치 커스텀 오버레이
   LatLng? _currentLocation;
   Set<CustomOverlay> _userLocationOverlay = {};
+  StreamSubscription<Position>? _locationSubscription;
 
   // 정상 인증 범위 원 (100m 반경)
   Set<Circle> _summitRangeCircle = {};
@@ -64,6 +73,7 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
+    _locationSubscription?.cancel();
     _mapService.dispose();
     super.dispose();
   }
@@ -89,17 +99,46 @@ class _MapScreenState extends State<MapScreen> {
     if (position != null && mounted) {
       final userLatLng = LatLng(position.latitude, position.longitude);
       _updateUserLocationOverlay(userLatLng);
+      _startLocationTracking();
     }
   }
 
-  void _updateUserLocationOverlay(LatLng userLatLng) {
+  void _startLocationTracking() {
+    _locationSubscription?.cancel();
+    _locationSubscription = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10, // 10m 이동 시 갱신
+      ),
+    ).listen((position) {
+      if (mounted) {
+        final userLatLng = LatLng(position.latitude, position.longitude);
+        _updateUserLocationOverlay(userLatLng, heading: position.heading);
+      }
+    });
+  }
+
+  double _currentHeading = 0;
+
+  void _updateUserLocationOverlay(LatLng userLatLng, {double? heading}) {
+    if (heading != null && heading > 0) {
+      _currentHeading = heading;
+    }
     setState(() {
       _currentLocation = userLatLng;
       _userLocationOverlay = {
         CustomOverlay(
           customOverlayId: 'user_location',
           latLng: userLatLng,
-          content: '<div style="width:30px;height:42px;position:relative;"><div style="width:30px;height:30px;background:linear-gradient(135deg,#ff6b6b,#e53935);border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 3px 8px rgba(0,0,0,0.4);"></div><div style="position:absolute;top:8px;left:8px;width:14px;height:14px;background:white;border-radius:50%;"></div></div>',
+          content: '<div style="width:50px;height:50px;position:relative;">'
+              // 방향 화살표
+              '<div style="position:absolute;top:0;left:50%;transform:translateX(-50%) rotate(${_currentHeading.round()}deg);width:20px;height:50px;transform-origin:center center;">'
+              '<div style="width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-bottom:16px solid rgba(229,57,53,0.5);margin:0 auto;"></div>'
+              '</div>'
+              // 빨간 핀
+              '<div style="position:absolute;top:10px;left:10px;width:30px;height:30px;background:linear-gradient(135deg,#ff6b6b,#e53935);border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 3px 8px rgba(0,0,0,0.4);"></div>'
+              '<div style="position:absolute;top:18px;left:18px;width:14px;height:14px;background:white;border-radius:50%;"></div>'
+              '</div>',
           xAnchor: 0.5,
           yAnchor: 0.5,
           zIndex: 100,
@@ -137,10 +176,27 @@ class _MapScreenState extends State<MapScreen> {
         ? oreumProvider.getBookmarkedOreums()
         : oreumProvider.oreums;
 
-    if (_certFilter == 1) {
-      oreums = oreums.where((o) => o.trailStatus == 'verified').toList();
-    } else if (_certFilter == 2) {
-      oreums = oreums.where((o) => o.trailStatus != 'verified').toList();
+    // 인증 필터
+    if (_certFilter != 0) {
+      final stampProvider = context.read<StampProvider>();
+      if (_certFilter == 1) {
+        // 누군가 인증한 오름
+        oreums = oreums.where((o) => stampProvider.isAnyCertified(o.id)).toList();
+      } else if (_certFilter == 2) {
+        // 아무도 인증 안 한 오름
+        oreums = oreums.where((o) => !stampProvider.isAnyCertified(o.id)).toList();
+      } else if (_certFilter == 3) {
+        // 내가 인증한 오름
+        oreums = oreums.where((o) => stampProvider.isStamped(o.id)).toList();
+      } else if (_certFilter == 4) {
+        // 내가 미인증한 오름
+        oreums = oreums.where((o) => !stampProvider.isStamped(o.id)).toList();
+      }
+    }
+
+    // 난이도 필터 (난이도 정보 없는 오름은 항상 포함)
+    if (_difficultyFilter != null) {
+      oreums = oreums.where((o) => o.difficulty == null || o.difficulty == _difficultyFilter).toList();
     }
 
     final markers = <Marker>[];
@@ -224,44 +280,54 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  void _toggleCertFilter() {
+  void _toggleCertFilter() async {
     setState(() {
-      _certFilter = (_certFilter + 1) % 3;
+      _certFilter = (_certFilter + 1) % 5;
     });
+
+    // 인증 필터 전환 시 데이터 새로고침
+    if (_certFilter != 0) {
+      final oreumProvider = context.read<OreumProvider>();
+      final stampProvider = context.read<StampProvider>();
+      await oreumProvider.loadOreums();
+      await stampProvider.loadStamps();
+    }
+
     _updateClusterer();
-    final labels = ['모든 오름 표시', '인증된 오름만 표시', '미인증 오름만 표시'];
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(labels[_certFilter]),
-        duration: const Duration(seconds: 1),
-      ),
-    );
+    final labels = ['모든 오름', '인증된 오름', '미인증 오름', '내 인증', '내 미인증'];
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(labels[_certFilter]),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+  }
+
+  void _toggleDifficultyFilter() {
+    const difficulties = [null, '쉬움', '보통', '어려움'];
+    final currentIndex = difficulties.indexOf(_difficultyFilter);
+    final nextIndex = (currentIndex + 1) % difficulties.length;
+
+    setState(() {
+      _difficultyFilter = difficulties[nextIndex];
+    });
+
+    _updateClusterer();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_difficultyFilter != null ? '난이도: $_difficultyFilter' : '모든 난이도 표시'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
   }
 
   void _showLoginRequiredDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('로그인 필요'),
-          content: const Text('이 기능을 사용하려면 로그인이 필요합니다.\n로그인 하시겠습니까?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/login');
-              },
-              child: const Text('로그인'),
-            ),
-          ],
-        );
-      },
-    );
+    LoginGuard.check(context);
   }
 
 
@@ -339,10 +405,11 @@ class _MapScreenState extends State<MapScreen> {
         );
       }
     } catch (e) {
+      debugPrint('에러: $e');
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('오류: $e')),
+          const SnackBar(content: Text('오류가 발생했습니다. 다시 시도해주세요.')),
         );
       }
     }
@@ -466,6 +533,10 @@ class _MapScreenState extends State<MapScreen> {
       final userLatLng = LatLng(position.latitude, position.longitude);
       _mapController!.setCenter(userLatLng);
       _updateUserLocationOverlay(userLatLng);
+      // 실시간 추적 시작 (아직 안 되어있으면)
+      if (_locationSubscription == null) {
+        _startLocationTracking();
+      }
     }
   }
 
@@ -594,7 +665,7 @@ class _MapScreenState extends State<MapScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => HikingScreen(oreum: oreum),
+        builder: (_) => HikingScreen(oreum: oreum, autoStart: true),
       ),
     );
   }
@@ -756,12 +827,13 @@ class _MapScreenState extends State<MapScreen> {
         );
       }
     } catch (e) {
+      debugPrint('에러: $e');
       if (mounted) {
         setState(() {
           _isLoadingTrail = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('등산로 로드 실패: $e')),
+          const SnackBar(content: Text('등산로를 불러오지 못했습니다.')),
         );
       }
     }
@@ -1069,10 +1141,8 @@ class _MapScreenState extends State<MapScreen> {
           ),
           // 상단 바
           _buildTopBar(),
-          // 우측 버튼들
+          // 우측 버튼들 (내 위치 포함)
           _buildSideButtons(),
-          // 내 위치 버튼
-          _buildMyLocationButton(),
           // 바텀 시트 (오름 정보)
           _buildBottomSheet(),
           // 시설물 목록 패널 (등산로 보기 시)
@@ -1259,18 +1329,25 @@ class _MapScreenState extends State<MapScreen> {
           ),
           const SizedBox(height: 8),
           _buildMapButton(
-            icon: _certFilter == 1
-                ? Icons.verified
-                : _certFilter == 2
-                    ? Icons.verified_outlined
-                    : Icons.filter_alt_outlined,
-            label: _certFilter == 1
-                ? '인증됨'
-                : _certFilter == 2
-                    ? '미인증'
-                    : '인증',
+            icon: _certFilter == 0
+                ? Icons.check_circle_outline
+                : _certFilter == 1
+                    ? Icons.people
+                    : _certFilter == 2
+                        ? Icons.people_outline
+                        : _certFilter == 3
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+            label: const ['인증', '인증됨', '미인증', '내인증', '내미인증'][_certFilter],
             isActive: _certFilter != 0,
             onTap: _toggleCertFilter,
+          ),
+          const SizedBox(height: 8),
+          _buildMapButton(
+            icon: Icons.terrain,
+            label: _difficultyFilter ?? '난이도',
+            isActive: _difficultyFilter != null,
+            onTap: _toggleDifficultyFilter,
           ),
           const SizedBox(height: 8),
           _buildMapButton(
@@ -1285,37 +1362,45 @@ class _MapScreenState extends State<MapScreen> {
             label: '가까운',
             onTap: _findNearestOreum,
           ),
+          const SizedBox(height: 8),
+          _buildMapButton(
+            icon: Icons.camera_alt_outlined,
+            label: 'AR',
+            onTap: _openArCamera,
+          ),
+          const SizedBox(height: 12),
+          // 내 위치 버튼
+          GestureDetector(
+            onTap: _moveToCurrentLocation,
+            child: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.my_location,
+                color: _currentLocation != null ? AppColors.primary : Colors.grey,
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildMyLocationButton() {
-    return Positioned(
-      right: 16,
-      top: MediaQuery.of(context).padding.top + 310,
-      child: GestureDetector(
-        onTap: _moveToCurrentLocation,
-        child: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Icon(
-            Icons.my_location,
-            color: _currentLocation != null ? AppColors.primary : Colors.grey,
-          ),
-        ),
-      ),
+  void _openArCamera() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ArCameraScreen()),
     );
   }
 
@@ -1364,7 +1449,7 @@ class _MapScreenState extends State<MapScreen> {
 
   Widget _buildBottomSheet() {
     return DraggableScrollableSheet(
-      initialChildSize: _selectedOreum != null ? 0.45 : 0.12,
+      initialChildSize: _selectedOreum != null ? 0.45 : 0.22,
       minChildSize: 0.12,
       maxChildSize: 0.85,
       builder: (context, scrollController) {
@@ -1407,16 +1492,174 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _buildDefaultContent() {
-    return const Padding(
-      padding: EdgeInsets.all(16),
+    return Padding(
+      padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          Text(
-            '지도에서 오름을 선택해주세요',
+          const Text(
+            '오름을 선택하거나 자유 운동을 시작하세요',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 15,
               color: AppColors.textSecondary,
             ),
+          ),
+          const SizedBox(height: 16),
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ExerciseScreen()),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.directions_walk, color: Colors.white, size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '자유 운동 시작',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          '오름 선택 없이 걷기·달리기 기록',
+                          style: TextStyle(fontSize: 12, color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.arrow_forward_ios, color: Colors.white70, size: 14),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          GestureDetector(
+            onTap: _showOreumRequestDialog,
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.add_location_alt_outlined, size: 14, color: AppColors.textHint),
+                SizedBox(width: 4),
+                Text(
+                  '찾는 오름이 없나요? 추가 요청하기',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textHint,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showOreumRequestDialog() {
+    if (!LoginGuard.check(context, message: '오름 추가 요청은 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
+
+    final nameController = TextEditingController();
+    final locationController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('오름 추가 요청', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '목록에 없는 오름 정보를 알려주시면\n검토 후 추가하겠습니다.',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: '오름 이름',
+                hintText: '예: ○○오름',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: locationController,
+              decoration: const InputDecoration(
+                labelText: '위치 정보 (선택)',
+                hintText: '예: 서귀포시 ○○리 근처',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              if (name.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('오름 이름을 입력해주세요')),
+                );
+                return;
+              }
+              try {
+                await InquiryService().createInquiry(
+                  category: 'oreum_request',
+                  email: '',
+                  title: '오름 추가 요청: $name',
+                  content: '오름 이름: $name\n위치: ${locationController.text.trim()}',
+                );
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('오름 추가 요청이 접수되었습니다')),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('요청 전송에 실패했습니다')),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text('요청하기'),
           ),
         ],
       ),
@@ -1473,12 +1716,44 @@ class _MapScreenState extends State<MapScreen> {
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            oreum.name,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                oreum.name,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              Consumer<StampProvider>(
+                                builder: (context, stampProvider, _) {
+                                  final isStamped = stampProvider.isStamped(oreum.id);
+                                  final visitCount = stampProvider.getVisitCount(oreum.id);
+                                  return Wrap(
+                                    spacing: 4,
+                                    runSpacing: 4,
+                                    children: [
+                                      if (isStamped)
+                                        _buildMiniBadge(
+                                          visitCount > 1 ? '인증완료 x$visitCount' : '인증완료',
+                                          AppColors.primary,
+                                        )
+                                      else
+                                        _buildMiniBadge('미인증', Colors.grey),
+                                      if (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty)
+                                        _buildMiniBadge('등산로 있음', const Color(0xFF2E7D32)),
+                                      if (oreum.startLat != null && oreum.startLng != null)
+                                        _buildMiniBadge('입구정보 있음', Colors.blue),
+                                      if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
+                                        _buildMiniBadge('탐방제한', const Color(0xFFB71C1C)),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ],
                           ),
                         ),
                         // 찜 버튼
@@ -1623,6 +1898,21 @@ class _MapScreenState extends State<MapScreen> {
           const SizedBox(width: 4),
           Text(text, style: const TextStyle(fontSize: 12)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMiniBadge(String label, Color color) {
+    return Container(
+      margin: const EdgeInsets.only(left: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.w600),
       ),
     );
   }

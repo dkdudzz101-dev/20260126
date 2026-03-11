@@ -20,14 +20,17 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/stamp_provider.dart';
+import '../../utils/login_guard.dart';
 import '../../widgets/hiking_share_card.dart';
 import '../oreum/oreum_error_report_screen.dart';
+import '../oreum/oreum_detail_screen.dart';
 import '../permission/background_location_permission_screen.dart';
 
 class HikingScreen extends StatefulWidget {
   final OreumModel oreum;
+  final bool autoStart;
 
-  const HikingScreen({super.key, required this.oreum});
+  const HikingScreen({super.key, required this.oreum, this.autoStart = false});
 
   @override
   State<HikingScreen> createState() => _HikingScreenState();
@@ -52,6 +55,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   bool _isHiking = false;
   bool _isPaused = false;
   bool _isCompleted = false;
+  bool _isStarting = false; // 등산 시작 처리 중 (중복 방지)
 
   // 추적 데이터
   Position? _currentPosition;
@@ -121,6 +125,12 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     _initializeLocation();
     _loadTrail(); // 등산로 로드
     _restoreHikingState(); // 저장된 등산 상태 복원
+    if (widget.autoStart) {
+      _isStarting = true; // 첫 프레임부터 "등반 시작" 버튼 숨김
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _startHiking();
+      });
+    }
   }
 
   // 시설물 마커 이미지 (SVG data URL)
@@ -590,19 +600,19 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   }
 
   void _startHiking() async {
+    // 이미 시작 처리 중이면 무시 (중복 방지)
+    if (_isStarting || _isHiking) return;
+
     // 로그인 체크
-    final authProvider = context.read<AuthProvider>();
-    if (!authProvider.isLoggedIn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('로그인이 필요합니다')),
-      );
-      return;
-    }
+    if (!LoginGuard.check(context, message: '등산을 시작하려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
+
+    setState(() => _isStarting = true);
 
     // 1단계: 포그라운드 위치 권한 확보 (전체화면 공개 포함)
     final fgGranted = await MapService.ensureLocationPermission(context);
     if (!fgGranted) {
       if (mounted) {
+        setState(() => _isStarting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('등산을 시작하려면 위치 권한이 필요합니다')),
         );
@@ -631,6 +641,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     _startSteps = pedometer.todaySteps;
 
     setState(() {
+      _isStarting = false;
       _isHiking = true;
       _isPaused = false;
       _trackPositions = [];
@@ -1013,7 +1024,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
         debugPrint('등반 기록 저장 실패: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('기록 저장 실패: $e'), duration: const Duration(seconds: 5)),
+            const SnackBar(content: Text('기록 저장에 실패했습니다.'), duration: Duration(seconds: 5)),
           );
         }
       }
@@ -1063,10 +1074,11 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
         _showCompletionDialog();
       }
     } catch (e) {
+      debugPrint('에러: $e');
       if (mounted) {
         Navigator.pop(context); // 로딩 닫기
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('저장 오류: $e')),
+          const SnackBar(content: Text('저장 중 오류가 발생했습니다.')),
         );
       }
     }
@@ -1131,6 +1143,8 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
               if (memo.isNotEmpty) {
                 _saveMemo(memo);
               }
+              // 스탬프 목록 새로고침
+              context.read<StampProvider>().loadStamps();
               Navigator.pop(context);
               Navigator.pop(context);
             },
@@ -1236,6 +1250,8 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
               if (memo.isNotEmpty) {
                 _saveMemo(memo);
               }
+              // 스탬프 목록 새로고침
+              context.read<StampProvider>().loadStamps();
               Navigator.pop(context);
               Navigator.pop(context);
             },
@@ -1247,134 +1263,404 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   }
 
   Future<void> _shareRecord() async {
-    // 공유 옵션 선택 다이얼로그
-    showModalBottomSheet(
+    // 사진이 있으면 첫번째 사진 선택, 없으면 null
+    File? selectedPhoto = _hikingPhotos.isNotEmpty ? _hikingPhotos.first : null;
+    await _showShareToggleOptions(selectedPhoto);
+  }
+
+  // 통합 공유 화면: 사진 선택 + 토글 옵션 + 미리보기 + 공유
+  Future<void> _showShareToggleOptions(File? photo) async {
+    final toggles = {
+      'route': true,
+      'time': true,
+      'distance': true,
+      'steps': true,
+      'calories': true,
+      'altitude': true,
+      'date': true,
+    };
+    bool isSharing = false;
+
+    File? selectedPhoto = photo;
+
+    await showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                '공유 방식 선택',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            return Container(
+              height: MediaQuery.of(sheetContext).size.height * 0.85,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
               ),
-              const SizedBox(height: 20),
-              // 사진 + 경로 공유 (삼성헬스 스타일)
-              if (_hikingPhotos.isNotEmpty)
-                ListTile(
-                  leading: Container(
-                    width: 48,
-                    height: 48,
+              child: Column(
+                children: [
+                  // 핸들바
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
                     ),
-                    child: const Icon(Icons.photo_camera, color: AppColors.primary),
                   ),
-                  title: const Text('사진 + 경로 공유'),
-                  subtitle: Text('촬영한 사진 ${_hikingPhotos.length}장과 함께'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _shareWithPhoto();
-                  },
-                ),
-              if (_hikingPhotos.isNotEmpty) const SizedBox(height: 8),
-              // 경로만 공유
-              ListTile(
-                leading: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '공유 카드 설정',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  child: const Icon(Icons.route, color: Colors.blue),
-                ),
-                title: const Text('경로 + 통계 공유'),
-                subtitle: const Text('지도와 등반 기록'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _shareRouteCard();
-                },
+                  const SizedBox(height: 16),
+                  // 미리보기 + 토글
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        children: [
+                          // 카드 미리보기
+                          GestureDetector(
+                            onTap: _hikingPhotos.length > 1 ? () async {
+                              final picked = await _selectPhotoForShare();
+                              if (picked != null) {
+                                setModalState(() => selectedPhoto = picked);
+                              }
+                            } : null,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: SizedBox(
+                                width: double.infinity,
+                                height: 280,
+                                child: selectedPhoto != null
+                                    ? Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          _buildPhotoShareCardPreview(
+                                            photo: selectedPhoto!,
+                                            showRoute: toggles['route']!,
+                                            showTime: toggles['time']!,
+                                            showDistance: toggles['distance']!,
+                                            showSteps: toggles['steps']!,
+                                            showCalories: toggles['calories']!,
+                                            showAltitude: toggles['altitude']!,
+                                            showDate: toggles['date']!,
+                                          ),
+                                          if (_hikingPhotos.length > 1)
+                                            Positioned(
+                                              top: 8,
+                                              right: 8,
+                                              child: Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black.withValues(alpha: 0.5),
+                                                  borderRadius: BorderRadius.circular(12),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    const Icon(Icons.photo_library, color: Colors.white, size: 14),
+                                                    const SizedBox(width: 4),
+                                                    Text(
+                                                      '${_hikingPhotos.length}',
+                                                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      )
+                                    : Container(
+                                        color: Colors.grey[200],
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.terrain, size: 48, color: Colors.grey[400]),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              widget.oreum.name,
+                                              style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.grey[600],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          // 사진 선택 썸네일 (여러 장일 때)
+                          if (_hikingPhotos.length > 1) ...[
+                            SizedBox(
+                              height: 64,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: _hikingPhotos.length,
+                                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                                itemBuilder: (context, index) {
+                                  final isSelected = selectedPhoto == _hikingPhotos[index];
+                                  return GestureDetector(
+                                    onTap: () {
+                                      setModalState(() => selectedPhoto = _hikingPhotos[index]);
+                                    },
+                                    child: Container(
+                                      width: 64,
+                                      height: 64,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: isSelected ? AppColors.primary : Colors.transparent,
+                                          width: 2,
+                                        ),
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Image.file(_hikingPhotos[index], fit: BoxFit.cover),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+                          // 토글 옵션들
+                          if (selectedPhoto != null)
+                            _buildToggleTile('GPS 경로', Icons.route, toggles['route']!, (v) {
+                              setModalState(() => toggles['route'] = v);
+                            }),
+                          _buildToggleTile('날짜', Icons.calendar_today, toggles['date']!, (v) {
+                            setModalState(() => toggles['date'] = v);
+                          }),
+                          _buildToggleTile('시간', Icons.schedule, toggles['time']!, (v) {
+                            setModalState(() => toggles['time'] = v);
+                          }),
+                          _buildToggleTile('거리', Icons.straighten, toggles['distance']!, (v) {
+                            setModalState(() => toggles['distance'] = v);
+                          }),
+                          _buildToggleTile('걸음수', Icons.directions_walk, toggles['steps']!, (v) {
+                            setModalState(() => toggles['steps'] = v);
+                          }),
+                          _buildToggleTile('칼로리', Icons.local_fire_department, toggles['calories']!, (v) {
+                            setModalState(() => toggles['calories'] = v);
+                          }),
+                          _buildToggleTile('고도', Icons.trending_up, toggles['altitude']!, (v) {
+                            setModalState(() => toggles['altitude'] = v);
+                          }),
+                          const SizedBox(height: 16),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // 공유하기 버튼
+                  Padding(
+                    padding: EdgeInsets.only(
+                      left: 20, right: 20, bottom: MediaQuery.of(sheetContext).padding.bottom + 16, top: 8,
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: isSharing ? null : () async {
+                          setModalState(() => isSharing = true);
+                          try {
+                            final now = DateTime.now();
+                            final dateStr = '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}';
+
+                            Widget shareWidget;
+                            if (selectedPhoto != null) {
+                              shareWidget = _buildPhotoShareCard(
+                                photo: selectedPhoto!,
+                                date: dateStr,
+                                showRoute: toggles['route']!,
+                                showTime: toggles['time']!,
+                                showDistance: toggles['distance']!,
+                                showSteps: toggles['steps']!,
+                                showCalories: toggles['calories']!,
+                                showAltitude: toggles['altitude']!,
+                                showDate: toggles['date']!,
+                              );
+                            } else {
+                              shareWidget = _buildRouteShareCard(
+                                date: dateStr,
+                                showRoute: toggles['route']!,
+                                showTime: toggles['time']!,
+                                showDistance: toggles['distance']!,
+                                showSteps: toggles['steps']!,
+                                showCalories: toggles['calories']!,
+                                showAltitude: toggles['altitude']!,
+                                showDate: toggles['date']!,
+                              );
+                            }
+
+                            final shareService = ShareService();
+                            final imagePath = await shareService.captureWidget(widget: shareWidget);
+
+                            if (!mounted) return;
+                            Navigator.pop(sheetContext);
+
+                            await shareService.shareImage(
+                              imagePath: imagePath,
+                              oreumName: widget.oreum.name,
+                              text: '${widget.oreum.name} 등반 완료!\n#JEJUOREUM #등산',
+                            );
+                          } catch (e) {
+                            setModalState(() => isSharing = false);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('공유에 실패했습니다. 다시 시도해주세요.')),
+                              );
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: isSharing
+                            ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                            : const Text('공유하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              // 기본 카드 공유
-              ListTile(
-                leading: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(Icons.share, color: Colors.green),
-                ),
-                title: const Text('기본 카드 공유'),
-                subtitle: const Text('통계만 공유'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _shareBasicCard();
-                },
-              ),
-            ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildToggleTile(String label, IconData icon, bool value, ValueChanged<bool> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Colors.grey[600]),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(label, style: const TextStyle(fontSize: 15)),
           ),
-        ),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeColor: AppColors.primary,
+          ),
+        ],
       ),
     );
   }
 
-  // 사진 + 경로 + 통계 공유 (삼성헬스 스타일)
-  Future<void> _shareWithPhoto() async {
-    if (_hikingPhotos.isEmpty) return;
+  // 미리보기용 (인라인 크기)
+  Widget _buildPhotoShareCardPreview({
+    required File photo,
+    bool showRoute = true,
+    bool showTime = true,
+    bool showDistance = true,
+    bool showSteps = true,
+    bool showCalories = true,
+    bool showAltitude = true,
+    bool showDate = true,
+  }) {
+    final now = DateTime.now();
+    final dateStr = '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}';
 
-    // 사진 선택 (첫번째 사진 또는 선택)
-    File? selectedPhoto;
-    if (_hikingPhotos.length == 1) {
-      selectedPhoto = _hikingPhotos.first;
-    } else {
-      selectedPhoto = await _selectPhotoForShare();
-    }
+    // 선택된 항목들로 정보 문자열 생성
+    final infoParts = <String>[];
+    if (showDistance) infoParts.add('${(_totalDistance / 1000).toStringAsFixed(2)}km');
+    if (showTime) infoParts.add(_formatDuration(_elapsedSeconds));
+    if (showSteps) infoParts.add('$_hikingSteps걸음');
+    if (showCalories) infoParts.add('${_calculatedCalories}kcal');
+    if (showAltitude) infoParts.add('+${_elevationGain.toStringAsFixed(0)}m');
+    if (showDate) infoParts.add(dateStr);
 
-    if (selectedPhoto == null) return;
-
-    // 로딩 표시
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.file(photo, fit: BoxFit.cover),
+        // 그라데이션
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black.withOpacity(0.15),
+                Colors.transparent,
+                Colors.black.withOpacity(0.7),
+              ],
+              stops: const [0.0, 0.3, 1.0],
+            ),
+          ),
+        ),
+        // GPS 경로 오버레이
+        if (showRoute && _trackPositions.length >= 2)
+          Positioned.fill(
+            child: CustomPaint(
+              painter: RoutePainter(
+                positions: _trackPositions,
+                strokeColor: Colors.white,
+                strokeWidth: 2.0,
+              ),
+            ),
+          ),
+        // 상단 워터마크
+        Positioned(
+          top: 12,
+          right: 12,
+          child: Text(
+            'JEJUOREUM',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.85),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 2.0,
+            ),
+          ),
+        ),
+        // 하단 오름 이름 + 정보
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.oreum.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (infoParts.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    infoParts.join('  |  '),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.85),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
-
-    try {
-      final now = DateTime.now();
-      final dateStr = '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}';
-
-      // 사진 위에 경로와 통계를 오버레이한 공유 이미지 생성
-      final shareWidget = _buildPhotoShareCard(
-        photo: selectedPhoto,
-        date: dateStr,
-      );
-
-      final shareService = ShareService();
-      if (mounted) Navigator.pop(context); // 로딩 닫기
-
-      await shareService.shareWidget(
-        widget: shareWidget,
-        oreumName: widget.oreum.name,
-        text: '${widget.oreum.name} 등반 완료!\n거리: ${(_totalDistance / 1000).toStringAsFixed(2)}km\n시간: ${_formatDuration(_elapsedSeconds)}\n#제주오름 #등산',
-      );
-    } catch (e) {
-      if (mounted) {
-        try { Navigator.pop(context); } catch (_) {}
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('공유에 실패했습니다. 다시 시도해주세요.')),
-        );
-      }
-    }
   }
 
   // 사진 선택 다이얼로그
@@ -1432,8 +1718,27 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     return selected;
   }
 
-  // 사진 위에 통계 오버레이 카드
-  Widget _buildPhotoShareCard({required File photo, required String date}) {
+  // 사진 위에 통계 오버레이 카드 (oreumpass 스타일, 토글 지원)
+  Widget _buildPhotoShareCard({
+    required File photo,
+    required String date,
+    bool showRoute = true,
+    bool showTime = true,
+    bool showDistance = true,
+    bool showSteps = true,
+    bool showCalories = true,
+    bool showAltitude = true,
+    bool showDate = true,
+  }) {
+    // 선택된 항목들로 정보 문자열 생성
+    final infoParts = <String>[];
+    if (showDistance) infoParts.add('${(_totalDistance / 1000).toStringAsFixed(2)}km');
+    if (showTime) infoParts.add(_formatDuration(_elapsedSeconds));
+    if (showSteps) infoParts.add('$_hikingSteps걸음');
+    if (showCalories) infoParts.add('${_calculatedCalories}kcal');
+    if (showAltitude) infoParts.add('+${_elevationGain.toStringAsFixed(0)}m');
+    if (showDate) infoParts.add(date);
+
     return Container(
       width: 400,
       height: 500,
@@ -1443,7 +1748,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 배경 사진
+          // 배경 사진 (전체)
           ClipRRect(
             borderRadius: BorderRadius.circular(16),
             child: Image.file(
@@ -1452,48 +1757,51 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
             ),
           ),
           // 그라데이션 오버레이
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.transparent,
-                  Colors.black.withOpacity(0.7),
-                ],
-                stops: const [0.4, 1.0],
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.15),
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.7),
+                  ],
+                  stops: const [0.0, 0.3, 1.0],
+                ),
               ),
             ),
           ),
-          // 상단 앱 로고
+          // GPS 경로 오버레이
+          if (showRoute && _trackPositions.length >= 2)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: CustomPaint(
+                size: const Size(400, 500),
+                painter: RoutePainter(
+                  positions: _trackPositions,
+                  strokeColor: Colors.white,
+                  strokeWidth: 2.5,
+                ),
+              ),
+            ),
+          // 상단 워터마크
           Positioned(
             top: 16,
-            left: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.9),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.terrain, color: AppColors.primary, size: 18),
-                  SizedBox(width: 4),
-                  Text(
-                    '제주오름',
-                    style: TextStyle(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
+            right: 16,
+            child: Text(
+              'JEJUOREUM',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.85),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 2.0,
               ),
             ),
           ),
-          // 하단 정보
+          // 하단 오름 이름 + 선택된 정보
           Positioned(
             bottom: 0,
             left: 0,
@@ -1503,34 +1811,27 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 오름 이름
+                  // 오름 이름 크게
                   Text(
                     widget.oreum.name,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 28,
+                      fontSize: 30,
                       fontWeight: FontWeight.bold,
+                      height: 1.2,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    date,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.8),
-                      fontSize: 14,
+                  if (infoParts.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      infoParts.join('  |  '),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontSize: 13,
+                        letterSpacing: 0.3,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  // 통계 그리드
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _buildShareStatItem('거리', '${(_totalDistance / 1000).toStringAsFixed(2)}km'),
-                      _buildShareStatItem('시간', _formatDuration(_elapsedSeconds)),
-                      _buildShareStatItem('칼로리', '${_calculatedCalories}kcal'),
-                      _buildShareStatItem('고도', '+${_elevationGain.toStringAsFixed(0)}m'),
-                    ],
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -1540,54 +1841,185 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     );
   }
 
-  Widget _buildShareStatItem(String label, String value) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withOpacity(0.7),
-            fontSize: 12,
-          ),
-        ),
-      ],
+  // 경로 + 통계 카드 공유 (토글 옵션 포함)
+  Future<void> _shareRouteCard() async {
+    final toggles = {
+      'route': true,
+      'time': true,
+      'distance': true,
+      'steps': true,
+      'calories': true,
+      'altitude': true,
+      'date': true,
+    };
+    bool isSharing = false;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            final now = DateTime.now();
+            final dateStr = '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}';
+
+            return Container(
+              height: MediaQuery.of(sheetContext).size.height * 0.85,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '공유 카드 설정',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        children: [
+                          // 미리보기
+                          _buildRouteShareCard(
+                            date: dateStr,
+                            showRoute: toggles['route']!,
+                            showTime: toggles['time']!,
+                            showDistance: toggles['distance']!,
+                            showSteps: toggles['steps']!,
+                            showCalories: toggles['calories']!,
+                            showAltitude: toggles['altitude']!,
+                            showDate: toggles['date']!,
+                          ),
+                          const SizedBox(height: 20),
+                          _buildToggleTile('GPS 경로', Icons.route, toggles['route']!, (v) {
+                            setModalState(() => toggles['route'] = v);
+                          }),
+                          _buildToggleTile('날짜', Icons.calendar_today, toggles['date']!, (v) {
+                            setModalState(() => toggles['date'] = v);
+                          }),
+                          _buildToggleTile('시간', Icons.schedule, toggles['time']!, (v) {
+                            setModalState(() => toggles['time'] = v);
+                          }),
+                          _buildToggleTile('거리', Icons.straighten, toggles['distance']!, (v) {
+                            setModalState(() => toggles['distance'] = v);
+                          }),
+                          _buildToggleTile('걸음수', Icons.directions_walk, toggles['steps']!, (v) {
+                            setModalState(() => toggles['steps'] = v);
+                          }),
+                          _buildToggleTile('칼로리', Icons.local_fire_department, toggles['calories']!, (v) {
+                            setModalState(() => toggles['calories'] = v);
+                          }),
+                          _buildToggleTile('고도', Icons.trending_up, toggles['altitude']!, (v) {
+                            setModalState(() => toggles['altitude'] = v);
+                          }),
+                          const SizedBox(height: 16),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.only(
+                      left: 20, right: 20, bottom: MediaQuery.of(sheetContext).padding.bottom + 16, top: 8,
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: isSharing ? null : () async {
+                          setModalState(() => isSharing = true);
+                          try {
+                            final shareWidget = _buildRouteShareCard(
+                              date: dateStr,
+                              showRoute: toggles['route']!,
+                              showTime: toggles['time']!,
+                              showDistance: toggles['distance']!,
+                              showSteps: toggles['steps']!,
+                              showCalories: toggles['calories']!,
+                              showAltitude: toggles['altitude']!,
+                              showDate: toggles['date']!,
+                            );
+                            final shareService = ShareService();
+                            final imagePath = await shareService.captureWidget(widget: shareWidget);
+                            if (!mounted) return;
+                            Navigator.pop(sheetContext);
+                            await shareService.shareImage(
+                              imagePath: imagePath,
+                              oreumName: widget.oreum.name,
+                              text: '${widget.oreum.name} 등반 완료!\n#JEJUOREUM #등산',
+                            );
+                          } catch (e) {
+                            setModalState(() => isSharing = false);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('공유에 실패했습니다.')),
+                              );
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: isSharing
+                            ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                            : const Text('공유하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
-  // 경로 + 통계 카드 공유
-  Future<void> _shareRouteCard() async {
-    final shareService = ShareService();
-    final now = DateTime.now();
-    final dateStr = '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}';
-
-    // 경로 포인트로 미니맵 생성
-    final routeCard = _buildRouteShareCard(date: dateStr);
-
-    try {
-      await shareService.shareWidget(
-        widget: routeCard,
-        oreumName: widget.oreum.name,
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('공유 실패: $e')),
-        );
-      }
-    }
-  }
-
   // 경로 공유 카드 위젯
-  Widget _buildRouteShareCard({required String date}) {
+  Widget _buildRouteShareCard({
+    required String date,
+    bool showRoute = true,
+    bool showTime = true,
+    bool showDistance = true,
+    bool showSteps = true,
+    bool showCalories = true,
+    bool showAltitude = true,
+    bool showDate = true,
+  }) {
+    final statItems = <Widget>[];
+    if (showDistance) statItems.add(Expanded(child: _buildRouteStatItem(Icons.straighten, '${(_totalDistance / 1000).toStringAsFixed(2)} km', '거리')));
+    if (showTime) statItems.add(Expanded(child: _buildRouteStatItem(Icons.schedule, _formatDuration(_elapsedSeconds), '시간')));
+    if (showSteps) statItems.add(Expanded(child: _buildRouteStatItem(Icons.directions_walk, '$_hikingSteps', '걸음수')));
+    if (showCalories) statItems.add(Expanded(child: _buildRouteStatItem(Icons.local_fire_department, '$_calculatedCalories kcal', '칼로리')));
+    if (showAltitude) statItems.add(Expanded(child: _buildRouteStatItem(Icons.trending_up, '+${_elevationGain.toStringAsFixed(0)} m', '상승')));
+
+    // 2개씩 Row로 묶기
+    final statRows = <Widget>[];
+    for (int i = 0; i < statItems.length; i += 2) {
+      if (i + 1 < statItems.length) {
+        statRows.add(Row(children: [statItems[i], const SizedBox(width: 8), statItems[i + 1]]));
+      } else {
+        statRows.add(Row(children: [statItems[i], const SizedBox(width: 8), const Expanded(child: SizedBox())]));
+      }
+      if (i + 2 < statItems.length) statRows.add(const SizedBox(height: 8));
+    }
+
     return Container(
       width: 400,
       padding: const EdgeInsets.all(24),
@@ -1607,15 +2039,6 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
           // 상단 헤더
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.terrain, color: AppColors.primary, size: 24),
-              ),
-              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1627,53 +2050,54 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Text(
-                      date,
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 14,
+                    if (showDate)
+                      Text(
+                        date,
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 14,
+                        ),
                       ),
-                    ),
                   ],
+                ),
+              ),
+              Text(
+                'JEJUOREUM',
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.5,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          // 경로 미니맵 (캔버스로 그리기)
-          Container(
-            height: 180,
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: CustomPaint(
-                size: const Size(double.infinity, 180),
-                painter: RoutePainter(positions: _trackPositions),
+          // 경로 미니맵
+          if (showRoute) ...[
+            const SizedBox(height: 20),
+            Container(
+              height: 180,
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: CustomPaint(
+                  size: const Size(double.infinity, 180),
+                  painter: RoutePainter(positions: _trackPositions),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 20),
-          // 통계 그리드
-          Row(
-            children: [
-              Expanded(child: _buildRouteStatItem(Icons.straighten, '${(_totalDistance / 1000).toStringAsFixed(2)} km', '거리')),
-              Expanded(child: _buildRouteStatItem(Icons.schedule, _formatDuration(_elapsedSeconds), '시간')),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: _buildRouteStatItem(Icons.local_fire_department, '$_calculatedCalories kcal', '칼로리')),
-              Expanded(child: _buildRouteStatItem(Icons.trending_up, '+${_elevationGain.toStringAsFixed(0)} m', '상승')),
-            ],
-          ),
+          ],
+          if (statRows.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            ...statRows,
+          ],
           const SizedBox(height: 16),
           // 해시태그
           Text(
-            '#제주오름 #등산 #오름탐험',
+            '#JEJUOREUM #등산 #오름탐험',
             style: TextStyle(
               color: Colors.grey[500],
               fontSize: 12,
@@ -1719,32 +2143,150 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     );
   }
 
-  // 기본 카드 공유
+  // 기본 카드 공유 (토글 옵션 포함)
   Future<void> _shareBasicCard() async {
-    final shareService = ShareService();
-    final now = DateTime.now();
-    final dateStr = '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}';
+    final toggles = {
+      'time': true,
+      'distance': true,
+      'steps': true,
+      'calories': true,
+      'altitude': true,
+      'date': true,
+    };
+    bool isSharing = false;
 
-    final shareCard = HikingShareCard(
-      oreumName: widget.oreum.name,
-      date: dateStr,
-      distanceKm: _totalDistance / 1000,
-      durationMinutes: _elapsedSeconds ~/ 60,
-      steps: _hikingSteps,
-    );
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            final now = DateTime.now();
+            final dateStr = '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}';
 
-    try {
-      await shareService.shareWidget(
-        widget: shareCard,
-        oreumName: widget.oreum.name,
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('공유 실패: $e')),
+            return Container(
+              height: MediaQuery.of(sheetContext).size.height * 0.85,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '공유 카드 설정',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        children: [
+                          // 미리보기
+                          HikingShareCard(
+                            oreumName: widget.oreum.name,
+                            date: dateStr,
+                            distanceKm: toggles['distance']! ? _totalDistance / 1000 : null,
+                            durationMinutes: toggles['time']! ? _elapsedSeconds ~/ 60 : null,
+                            steps: toggles['steps']! ? _hikingSteps : null,
+                            routePoints: _trackPositions.length >= 2
+                                ? _trackPositions.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList()
+                                : null,
+                          ),
+                          const SizedBox(height: 20),
+                          _buildToggleTile('날짜', Icons.calendar_today, toggles['date']!, (v) {
+                            setModalState(() => toggles['date'] = v);
+                          }),
+                          _buildToggleTile('시간', Icons.schedule, toggles['time']!, (v) {
+                            setModalState(() => toggles['time'] = v);
+                          }),
+                          _buildToggleTile('거리', Icons.straighten, toggles['distance']!, (v) {
+                            setModalState(() => toggles['distance'] = v);
+                          }),
+                          _buildToggleTile('걸음수', Icons.directions_walk, toggles['steps']!, (v) {
+                            setModalState(() => toggles['steps'] = v);
+                          }),
+                          _buildToggleTile('칼로리', Icons.local_fire_department, toggles['calories']!, (v) {
+                            setModalState(() => toggles['calories'] = v);
+                          }),
+                          _buildToggleTile('고도', Icons.trending_up, toggles['altitude']!, (v) {
+                            setModalState(() => toggles['altitude'] = v);
+                          }),
+                          const SizedBox(height: 16),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.only(
+                      left: 20, right: 20, bottom: MediaQuery.of(sheetContext).padding.bottom + 16, top: 8,
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: isSharing ? null : () async {
+                          setModalState(() => isSharing = true);
+                          try {
+                            final shareCard = HikingShareCard(
+                              oreumName: widget.oreum.name,
+                              date: dateStr,
+                              distanceKm: toggles['distance']! ? _totalDistance / 1000 : null,
+                              durationMinutes: toggles['time']! ? _elapsedSeconds ~/ 60 : null,
+                              steps: toggles['steps']! ? _hikingSteps : null,
+                              routePoints: _trackPositions.length >= 2
+                                  ? _trackPositions.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList()
+                                  : null,
+                            );
+                            final shareService = ShareService();
+                            final imagePath = await shareService.captureWidget(widget: shareCard);
+                            if (!mounted) return;
+                            Navigator.pop(sheetContext);
+                            await shareService.shareImage(
+                              imagePath: imagePath,
+                              oreumName: widget.oreum.name,
+                              text: '${widget.oreum.name} 등반 완료!\n#JEJUOREUM #등산',
+                            );
+                          } catch (e) {
+                            setModalState(() => isSharing = false);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('공유에 실패했습니다.')),
+                              );
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: isSharing
+                            ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                            : const Text('공유하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         );
-      }
-    }
+      },
+    );
   }
 
   // 메모 저장 (최근 저장된 기록에 memo 추가)
@@ -1951,6 +2493,25 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
                       Navigator.push(
                         context,
                         MaterialPageRoute(
+                          builder: (_) => OreumDetailScreen(oreum: widget.oreum),
+                        ),
+                      );
+                    },
+                    child: Tooltip(
+                      message: '오름 상세정보',
+                      child: Icon(
+                        Icons.info_outline,
+                        color: AppColors.textSecondary,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
                           builder: (_) => OreumErrorReportScreen(
                             oreum: widget.oreum,
                             initialLatitude: _currentPosition?.latitude,
@@ -1988,55 +2549,64 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
               ),
               if (_isHiking) ...[
                 const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: _isDescending
-                      ? [
-                          _buildStatItem(
-                            Icons.directions_walk,
-                            _formatNumber(_descentSteps),
-                            '하산 걸음수',
-                          ),
-                          _buildStatItem(
-                            Icons.straighten,
-                            '${(_descentDistance / 1000).toStringAsFixed(2)} km',
-                            '하산 거리',
-                          ),
-                          _buildStatItem(
-                            Icons.schedule,
-                            _formatDuration(_descentSeconds),
-                            '하산 시간',
-                          ),
-                          _buildStatItem(
-                            Icons.terrain,
-                            '${((_ascentDistance + _descentDistance) / 1000).toStringAsFixed(2)} km',
-                            '총 거리',
-                          ),
-                        ]
-                      : [
-                          _buildStatItem(
-                            Icons.directions_walk,
-                            _formatNumber(_hikingSteps),
-                            '걸음수',
-                          ),
-                          _buildStatItem(
-                            Icons.straighten,
-                            '${(_totalDistance / 1000).toStringAsFixed(2)} km',
-                            '이동 거리',
-                          ),
-                          _buildStatItem(
-                            Icons.flag,
-                            _distanceToSummit > 1000
-                                ? '${(_distanceToSummit / 1000).toStringAsFixed(1)}km'
-                                : '${_distanceToSummit.toInt()}m',
-                            '남은 거리',
-                          ),
-                          _buildStatItem(
-                            Icons.schedule,
-                            _getEstimatedRemainingTime(),
-                            '남은 시간',
-                          ),
-                        ],
+                GestureDetector(
+                  onTap: () => _showDetailedStats(),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: _isDescending
+                        ? [
+                            _buildStatItem(
+                              Icons.directions_walk,
+                              _formatNumber(_descentSteps),
+                              '하산 걸음수',
+                            ),
+                            _buildStatItem(
+                              Icons.straighten,
+                              '${(_descentDistance / 1000).toStringAsFixed(2)} km',
+                              '하산 거리',
+                            ),
+                            _buildStatItem(
+                              Icons.schedule,
+                              _formatDuration(_descentSeconds),
+                              '하산 시간',
+                            ),
+                            _buildStatItem(
+                              Icons.terrain,
+                              '${((_ascentDistance + _descentDistance) / 1000).toStringAsFixed(2)} km',
+                              '총 거리',
+                            ),
+                          ]
+                        : [
+                            _buildStatItem(
+                              Icons.directions_walk,
+                              _formatNumber(_hikingSteps),
+                              '걸음수',
+                            ),
+                            _buildStatItem(
+                              Icons.straighten,
+                              '${(_totalDistance / 1000).toStringAsFixed(2)} km',
+                              '이동 거리',
+                            ),
+                            _buildStatItem(
+                              Icons.flag,
+                              _distanceToSummit > 1000
+                                  ? '${(_distanceToSummit / 1000).toStringAsFixed(1)}km'
+                                  : '${_distanceToSummit.toInt()}m',
+                              '남은 거리',
+                            ),
+                            _buildStatItem(
+                              Icons.schedule,
+                              _getEstimatedRemainingTime(),
+                              '남은 시간',
+                            ),
+                          ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Center(
+                  child: Text('탭하여 상세 정보 보기',
+                    style: TextStyle(fontSize: 10, color: Colors.grey[400]),
+                  ),
                 ),
               ],
             ],
@@ -2285,6 +2855,130 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     );
   }
 
+  void _showDetailedStats() {
+    final avgSpeed = _elapsedSeconds > 0
+        ? (_totalDistance / 1000) / (_elapsedSeconds / 3600)
+        : 0.0;
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.bar_chart, color: AppColors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${widget.oreum.name} - ${_isDescending ? "하산" : "등반"} 상세',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              // 시간/거리
+              Row(
+                children: [
+                  Expanded(child: _buildDetailStat('총 시간', _formatDuration(_elapsedSeconds), Icons.schedule)),
+                  Expanded(child: _buildDetailStat('총 거리', '${(_totalDistance / 1000).toStringAsFixed(2)} km', Icons.straighten)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // 걸음수/칼로리
+              Row(
+                children: [
+                  Expanded(child: _buildDetailStat('걸음수', _formatNumber(_hikingSteps), Icons.directions_walk)),
+                  Expanded(child: _buildDetailStat('칼로리', '$_calculatedCalories kcal', Icons.local_fire_department)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // 고도
+              Row(
+                children: [
+                  Expanded(child: _buildDetailStat('누적 상승', '+${_elevationGain.toStringAsFixed(0)}m', Icons.trending_up)),
+                  Expanded(child: _buildDetailStat('누적 하강', '-${_elevationLoss.toStringAsFixed(0)}m', Icons.trending_down)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  if (_maxAltitude > 0)
+                    Expanded(child: _buildDetailStat('최고 고도', '${_maxAltitude.toStringAsFixed(0)}m', Icons.height)),
+                  if (_minAltitude < double.infinity)
+                    Expanded(child: _buildDetailStat('최저 고도', '${_minAltitude.toStringAsFixed(0)}m', Icons.height)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // 평균속도/남은거리
+              Row(
+                children: [
+                  Expanded(child: _buildDetailStat('평균 속도', '${avgSpeed.toStringAsFixed(1)} km/h', Icons.speed)),
+                  if (!_isDescending)
+                    Expanded(child: _buildDetailStat('정상까지', _distanceToSummit > 1000
+                        ? '${(_distanceToSummit / 1000).toStringAsFixed(1)}km'
+                        : '${_distanceToSummit.toInt()}m', Icons.flag)),
+                ],
+              ),
+              if (_isDescending) ...[
+                const Divider(height: 24),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('하산 기록', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(child: _buildDetailStat('하산 거리', '${(_descentDistance / 1000).toStringAsFixed(2)} km', Icons.straighten)),
+                    Expanded(child: _buildDetailStat('하산 시간', _formatDuration(_descentSeconds), Icons.schedule)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(child: _buildDetailStat('하산 걸음수', _formatNumber(_descentSteps), Icons.directions_walk)),
+                    Expanded(child: _buildDetailStat('하산 칼로리', '$_descentCalories kcal', Icons.local_fire_department)),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailStat(String label, String value, IconData icon) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBottomControls() {
     return Positioned(
       bottom: 0,
@@ -2311,6 +3005,21 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   }
 
   Widget _buildStartButton() {
+    // autoStart로 진입하여 권한 확인 중일 때는 로딩만 표시
+    if (_isStarting) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text('등반 준비 중...', style: TextStyle(color: AppColors.textSecondary)),
+          ],
+        ),
+      );
+    }
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -2614,8 +3323,10 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
 // GPS 경로를 그리는 CustomPainter
 class RoutePainter extends CustomPainter {
   final List<Position> positions;
+  final Color? strokeColor;
+  final double? strokeWidth;
 
-  RoutePainter({required this.positions});
+  RoutePainter({required this.positions, this.strokeColor, this.strokeWidth});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2699,9 +3410,9 @@ class RoutePainter extends CustomPainter {
 
     // 경로 선
     final pathPaint = Paint()
-      ..color = AppColors.primary
+      ..color = strokeColor ?? AppColors.primary
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 4
+      ..strokeWidth = strokeWidth ?? 4
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 

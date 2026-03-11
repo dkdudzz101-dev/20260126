@@ -170,7 +170,8 @@ class WeatherData {
 
   factory WeatherData.fromOpenWeatherMap(Map<String, dynamic> json) {
     final main = json['main'];
-    final weather = json['weather'][0];
+    final weatherList = json['weather'] as List?;
+    final weather = (weatherList != null && weatherList.isNotEmpty) ? weatherList[0] : <String, dynamic>{};
     final wind = json['wind'];
 
     return WeatherData(

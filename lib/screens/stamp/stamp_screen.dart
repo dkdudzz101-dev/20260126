@@ -516,7 +516,8 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
           itemBuilder: (context, index) {
             final oreum = currentOreums[index];
             final hasStamp = stampProvider.hasStamp(oreum.id);
-            return _buildCollectionItem(oreum, hasStamp);
+            final visitCount = stampProvider.getVisitCount(oreum.id);
+            return _buildCollectionItem(oreum, hasStamp, visitCount);
           },
         ),
         const SizedBox(height: 50),
@@ -524,7 +525,7 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildCollectionItem(OreumModel oreum, bool hasStamp) {
+  Widget _buildCollectionItem(OreumModel oreum, bool hasStamp, int visitCount) {
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -584,22 +585,36 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
                           ),
                         ),
                       ),
-                    // 획득 체크
+                    // 획득 체크 + 방문 횟수
                     if (hasStamp)
                       Positioned(
                         top: 4,
                         right: 4,
                         child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: const BoxDecoration(
+                          padding: visitCount > 1
+                              ? const EdgeInsets.symmetric(horizontal: 5, vertical: 2)
+                              : const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
                             color: AppColors.primary,
-                            shape: BoxShape.circle,
+                            borderRadius: visitCount > 1
+                                ? BorderRadius.circular(8)
+                                : null,
+                            shape: visitCount > 1 ? BoxShape.rectangle : BoxShape.circle,
                           ),
-                          child: const Icon(
-                            Icons.check,
-                            color: Colors.white,
-                            size: 10,
-                          ),
+                          child: visitCount > 1
+                              ? Text(
+                                  'x$visitCount',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.check,
+                                  color: Colors.white,
+                                  size: 10,
+                                ),
                         ),
                       ),
                     ],
@@ -919,8 +934,9 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
 
     if (nearbyOreums.length == 1) {
       // 1개만 있으면 바로 인증
-      final nearestOreum = nearbyOreums.first['oreum'] as OreumModel;
-      final distance = nearbyOreums.first['distance'] as double;
+      final nearestOreum = nearbyOreums.first['oreum'] as OreumModel?;
+      final distance = (nearbyOreums.first['distance'] as num?)?.toDouble() ?? 0;
+      if (nearestOreum == null) return;
       _confirmAndVerify(nearestOreum, distance);
     } else {
       // 여러개면 선택하게

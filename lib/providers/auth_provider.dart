@@ -93,6 +93,9 @@ class AuthProvider extends ChangeNotifier {
       _provider = await _storage.read(key: 'provider');
       _isLoggedIn = true;
       notifyListeners();
+
+      // public.users 프로필 존재 보장 (누락 시 자동 생성)
+      await _ensurePublicProfile();
       return;
     }
 
@@ -171,6 +174,33 @@ class AuthProvider extends ChangeNotifier {
     await _storage.write(key: 'provider', value: _provider);
 
     notifyListeners();
+  }
+
+  // public.users 프로필 존재 보장 (로그인 후 누락 방지)
+  Future<void> _ensurePublicProfile() async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    try {
+      final existing = await _supabase
+          .from('users')
+          .select('id')
+          .eq('id', userId)
+          .maybeSingle();
+
+      if (existing == null) {
+        await _supabase.from('users').upsert({
+          'id': userId,
+          'email': _email ?? _supabase.auth.currentUser?.email ?? '',
+          'nickname': _nickname ?? '제주탐험가',
+          'profile_image': _profileImage,
+          'provider': _provider ?? 'unknown',
+        });
+        debugPrint('누락된 public.users 프로필 자동 생성: $userId');
+      }
+    } catch (e) {
+      debugPrint('프로필 존재 확인 에러: $e');
+    }
   }
 
   // 비밀번호 생성 (소셜 ID 기반)
@@ -541,8 +571,8 @@ class AuthProvider extends ChangeNotifier {
         finalProfileImage = existingUser['profile_image'] ?? profileImage;
         debugPrint('기존 사용자 - 닉네임 유지: $finalNickname');
       } else {
-        // 신규 사용자면 새로 저장
-        await _supabase.from('users').insert({
+        // 신규 사용자면 upsert로 확실하게 저장
+        await _supabase.from('users').upsert({
           'id': supabaseUserId,
           'email': email,
           'nickname': nickname,
@@ -553,6 +583,19 @@ class AuthProvider extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('사용자 프로필 처리 에러: $e');
+      // 프로필 저장 실패 시 재시도 (외래키 의존 기능을 위해 필수)
+      try {
+        await _supabase.from('users').upsert({
+          'id': supabaseUserId,
+          'email': email,
+          'nickname': nickname,
+          'profile_image': profileImage,
+          'provider': provider,
+        });
+        debugPrint('프로필 저장 재시도 성공');
+      } catch (retryError) {
+        debugPrint('프로필 저장 재시도 실패: $retryError');
+      }
     }
 
     // 로컬 저장
@@ -763,6 +806,24 @@ class AuthProvider extends ChangeNotifier {
           await _storage.write(key: 'nickname', value: _nickname);
           await _storage.write(key: 'provider', value: _provider);
 
+          // 프로필 저장 (Email not confirmed여도 public.users에는 생성 필요)
+          final supabaseUserId = signUpResponse.user?.id;
+          if (supabaseUserId != null) {
+            try {
+              await _supabase.from('users').upsert({
+                'id': supabaseUserId,
+                'email': authEmail,
+                'real_email': email,
+                'name': name,
+                'nickname': nickname,
+                'birth_date': birthDate.toIso8601String().split('T')[0],
+                'provider': 'local',
+              });
+            } catch (profileError) {
+              debugPrint('Email not confirmed 사용자 프로필 저장 에러: $profileError');
+            }
+          }
+
           notifyListeners();
           return {'success': true, 'warning': '이메일 확인이 필요할 수 있습니다.'};
         }
@@ -862,9 +923,9 @@ class AuthProvider extends ChangeNotifier {
               .from('users')
               .select('nickname, profile_image')
               .eq('id', supabaseUserId)
-              .single();
-          _nickname = userData['nickname'];
-          _profileImage = userData['profile_image'];
+              .maybeSingle();
+          _nickname = userData?['nickname'] ?? '제주탐험가';
+          _profileImage = userData?['profile_image'];
         } catch (e) {
           _nickname = '제주탐험가';
         }

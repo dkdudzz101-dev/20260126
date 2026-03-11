@@ -9,7 +9,8 @@ import '../../models/oreum_model.dart';
 import '../../providers/stamp_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/oreum_provider.dart';
-import '../../services/review_service.dart';
+import '../../services/community_service.dart';
+import '../../models/post_model.dart';
 import '../../services/blog_service.dart';
 import '../../services/map_service.dart';
 import '../../services/oreum_service.dart';
@@ -18,6 +19,7 @@ import '../hiking/hiking_screen.dart';
 import '../map/map_screen.dart';
 import 'oreum_error_report_screen.dart';
 import 'package:photo_view/photo_view.dart';
+import '../../utils/login_guard.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 
 class OreumDetailScreen extends StatefulWidget {
@@ -31,12 +33,12 @@ class OreumDetailScreen extends StatefulWidget {
 
 class _OreumDetailScreenState extends State<OreumDetailScreen> {
   OreumModel get oreum => widget.oreum;
-  final ReviewService _reviewService = ReviewService();
+  final CommunityService _communityService = CommunityService();
   final BlogService _blogService = BlogService();
   final OreumService _oreumService = OreumService();
   final StampService _stampService = StampService();
-  List<Map<String, dynamic>> _reviews = [];
-  bool _isLoadingReviews = true;
+  List<PostModel> _oreumPosts = [];
+  bool _isLoadingPosts = true;
   List<BlogPost> _blogPosts = [];
   bool _isLoadingBlogs = true;
   List<String> _officialImages = [];
@@ -50,7 +52,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _loadReviews();
+    _loadOreumPosts();
     _loadBlogPosts();
     _loadGalleryImages();
     _loadStampUsers();
@@ -150,9 +152,10 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
         _loadGalleryImages(); // 갤러리 새로고침
       }
     } catch (e) {
+      debugPrint('에러: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('업로드 실패: $e')),
+          const SnackBar(content: Text('업로드에 실패했습니다.')),
         );
       }
     } finally {
@@ -178,18 +181,18 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     }
   }
 
-  Future<void> _loadReviews() async {
+  Future<void> _loadOreumPosts() async {
     try {
-      final reviews = await _reviewService.getReviewsByOreum(oreum.id);
+      final data = await _communityService.getPostsByOreum(oreum.id);
       if (mounted) {
         setState(() {
-          _reviews = reviews;
-          _isLoadingReviews = false;
+          _oreumPosts = data.map((d) => PostModel.fromSupabase(d)).toList();
+          _isLoadingPosts = false;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoadingReviews = false);
+        setState(() => _isLoadingPosts = false);
       }
     }
   }
@@ -221,8 +224,8 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 // 블로그 섹션
                 _buildBlogSection(),
                 const Divider(height: 32),
-                // 리뷰 섹션
-                _buildReviewSection(),
+                // 커뮤니티 게시글
+                _buildCommunityPostsSection(),
                 const SizedBox(height: 100),
               ],
             ),
@@ -595,9 +598,10 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
         setState(() {});
       }
     } catch (e) {
+      debugPrint('에러: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('변경 실패: $e')),
+          const SnackBar(content: Text('변경에 실패했습니다.')),
         );
       }
     }
@@ -1388,7 +1392,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => HikingScreen(oreum: oreum),
+        builder: (_) => HikingScreen(oreum: oreum, autoStart: true),
       ),
     );
   }
@@ -1993,7 +1997,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     );
   }
 
-  Widget _buildReviewSection() {
+  Widget _buildCommunityPostsSection() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
@@ -2005,7 +2009,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
               Row(
                 children: [
                   const Text(
-                    '방문자 리뷰',
+                    '방문 후기',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(width: 8),
@@ -2016,8 +2020,8 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      '${_reviews.length}',
-                      style: TextStyle(
+                      '${_oreumPosts.length}',
+                      style: const TextStyle(
                         fontSize: 12,
                         color: AppColors.primary,
                         fontWeight: FontWeight.w600,
@@ -2027,16 +2031,16 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 ],
               ),
               TextButton.icon(
-                onPressed: () => _showWriteReviewDialog(),
+                onPressed: () => _showWritePostDialog(),
                 icon: const Icon(Icons.edit, size: 16),
-                label: const Text('리뷰 작성'),
+                label: const Text('후기 작성'),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          if (_isLoadingReviews)
+          if (_isLoadingPosts)
             const Center(child: CircularProgressIndicator())
-          else if (_reviews.isEmpty)
+          else if (_oreumPosts.isEmpty)
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
@@ -2046,31 +2050,21 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
               child: const Center(
                 child: Column(
                   children: [
-                    Icon(Icons.rate_review_outlined, size: 40, color: AppColors.textHint),
+                    Icon(Icons.chat_bubble_outline, size: 40, color: AppColors.textHint),
                     SizedBox(height: 8),
-                    Text('첫 번째 리뷰를 작성해보세요!', style: TextStyle(color: AppColors.textSecondary)),
+                    Text('첫 번째 후기를 작성해보세요!', style: TextStyle(color: AppColors.textSecondary)),
                   ],
                 ),
               ),
             )
           else
-            ..._reviews.map((review) => _buildReviewCard(review)),
+            ..._oreumPosts.map((post) => _buildPostCard(post)),
         ],
       ),
     );
   }
 
-  Widget _buildReviewCard(Map<String, dynamic> review) {
-    final user = review['users'] as Map<String, dynamic>?;
-    final nickname = user?['nickname'] ?? '익명';
-    final profileImage = user?['profile_image'] as String?;
-    final rating = review['rating'] as int? ?? 0;
-    final content = review['content'] as String? ?? '';
-    final createdAt = DateTime.tryParse(review['created_at'] ?? '');
-    final dateStr = createdAt != null
-        ? '${createdAt.year}.${createdAt.month.toString().padLeft(2, '0')}.${createdAt.day.toString().padLeft(2, '0')}'
-        : '';
-
+  Widget _buildPostCard(PostModel post) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -2087,8 +2081,8 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
               CircleAvatar(
                 radius: 18,
                 backgroundColor: AppColors.surface,
-                backgroundImage: profileImage != null ? NetworkImage(profileImage) : null,
-                child: profileImage == null
+                backgroundImage: post.userProfileImage != null ? NetworkImage(post.userProfileImage!) : null,
+                child: post.userProfileImage == null
                     ? const Icon(Icons.person, size: 20, color: AppColors.textSecondary)
                     : null,
               ),
@@ -2098,35 +2092,60 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      nickname,
+                      post.userNickname ?? '익명',
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
-                    Row(
-                      children: [
-                        ...List.generate(5, (index) {
-                          return Icon(
-                            index < rating ? Icons.star : Icons.star_border,
-                            size: 14,
-                            color: Colors.amber,
-                          );
-                        }),
-                        const SizedBox(width: 8),
-                        Text(
-                          dateStr,
-                          style: const TextStyle(fontSize: 11, color: AppColors.textHint),
-                        ),
-                      ],
+                    Text(
+                      post.timeAgo,
+                      style: const TextStyle(fontSize: 11, color: AppColors.textHint),
                     ),
                   ],
                 ),
               ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.favorite, size: 14, color: AppColors.textHint),
+                  const SizedBox(width: 2),
+                  Text('${post.likeCount}', style: const TextStyle(fontSize: 11, color: AppColors.textHint)),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.chat_bubble_outline, size: 14, color: AppColors.textHint),
+                  const SizedBox(width: 2),
+                  Text('${post.commentCount}', style: const TextStyle(fontSize: 11, color: AppColors.textHint)),
+                ],
+              ),
             ],
           ),
-          if (content.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            post.content,
+            style: const TextStyle(fontSize: 14, height: 1.5),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (post.images.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Text(
-              content,
-              style: const TextStyle(fontSize: 14, height: 1.5),
+            SizedBox(
+              height: 80,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: post.images.length > 3 ? 3 : post.images.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) => ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    post.images[i],
+                    width: 80,
+                    height: 80,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 80, height: 80,
+                      color: AppColors.surface,
+                      child: const Icon(Icons.image, color: AppColors.textHint),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ],
         ],
@@ -2134,18 +2153,10 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     );
   }
 
-  void _showWriteReviewDialog() {
-    final authProvider = context.read<AuthProvider>();
-
-    if (!authProvider.isLoggedIn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('리뷰를 작성하려면 로그인이 필요합니다')),
-      );
-      return;
-    }
+  void _showWritePostDialog() {
+    if (!LoginGuard.check(context, message: '후기를 작성하려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
 
     final contentController = TextEditingController();
-    int selectedRating = 5;
     bool isSubmitting = false;
 
     showModalBottomSheet(
@@ -2171,9 +2182,9 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        '리뷰 작성',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      Text(
+                        '${oreum.name} 후기',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                       IconButton(
                         icon: const Icon(Icons.close),
@@ -2182,28 +2193,10 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  const Text('별점', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: List.generate(5, (index) {
-                      return GestureDetector(
-                        onTap: () => setModalState(() => selectedRating = index + 1),
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Icon(
-                            index < selectedRating ? Icons.star : Icons.star_border,
-                            size: 32,
-                            color: Colors.amber,
-                          ),
-                        ),
-                      );
-                    }),
-                  ),
-                  const SizedBox(height: 16),
                   TextField(
                     controller: contentController,
                     maxLines: 4,
-                    maxLength: 200,
+                    maxLength: 500,
                     decoration: const InputDecoration(
                       hintText: '방문 후기를 남겨주세요...',
                       border: OutlineInputBorder(),
@@ -2216,29 +2209,34 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                       onPressed: isSubmitting
                           ? null
                           : () async {
+                              if (contentController.text.trim().isEmpty) {
+                                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                  const SnackBar(content: Text('내용을 입력해주세요')),
+                                );
+                                return;
+                              }
                               setModalState(() => isSubmitting = true);
                               try {
-                                await _reviewService.createReview(
+                                await _communityService.createPost(
+                                  content: contentController.text.trim(),
                                   oreumId: oreum.id,
-                                  rating: selectedRating,
-                                  content: contentController.text.trim().isNotEmpty
-                                      ? contentController.text.trim()
-                                      : null,
+                                  category: '후기',
                                 );
                                 if (dialogContext.mounted) {
                                   Navigator.pop(dialogContext);
                                 }
                                 if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('리뷰가 등록되었습니다')),
+                                    const SnackBar(content: Text('후기가 등록되었습니다')),
                                   );
-                                  _loadReviews();
+                                  _loadOreumPosts();
                                 }
                               } catch (e) {
+                                debugPrint('에러: $e');
                                 setModalState(() => isSubmitting = false);
                                 if (dialogContext.mounted) {
                                   ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                    SnackBar(content: Text('오류: $e')),
+                                    const SnackBar(content: Text('오류가 발생했습니다.')),
                                   );
                                 }
                               }
@@ -2265,30 +2263,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   }
 
   void _showLoginRequiredDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('로그인 필요'),
-          content: const Text('찜 기능을 사용하려면 로그인이 필요합니다.\n로그인 하시겠습니까?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                // 로그인 화면으로 이동
-                Navigator.pushNamed(context, '/login');
-              },
-              child: const Text('로그인'),
-            ),
-          ],
-        );
-      },
-    );
+    LoginGuard.check(context);
   }
 
   void _shareOreum() {
@@ -2460,9 +2435,10 @@ class _GalleryViewerScreenState extends State<GalleryViewerScreen> {
           Navigator.pop(context);
         }
       } catch (e) {
+        debugPrint('에러: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('삭제 실패: $e')),
+            const SnackBar(content: Text('삭제에 실패했습니다.')),
           );
         }
       }
@@ -2519,9 +2495,10 @@ class _GalleryViewerScreenState extends State<GalleryViewerScreen> {
           );
         }
       } catch (e) {
+        debugPrint('에러: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('신고 실패: $e')),
+            const SnackBar(content: Text('신고에 실패했습니다. 다시 시도해주세요.')),
           );
         }
       }

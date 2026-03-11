@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/auth_provider.dart';
 import '../main_tab_screen.dart';
@@ -73,9 +74,10 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
     } catch (e) {
+      debugPrint('에러: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('로그인 실패: $e')),
+          const SnackBar(content: Text('로그인에 실패했습니다. 다시 시도해주세요.')),
         );
       }
     } finally {
@@ -104,7 +106,7 @@ class _LoginScreenState extends State<LoginScreen> {
       debugPrint('Apple 로그인 화면 에러: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('로그인 실패: $e')),
+          const SnackBar(content: Text('로그인에 실패했습니다. 다시 시도해주세요.')),
         );
       }
     } finally {
@@ -253,6 +255,18 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
                 ),
                 const SizedBox(height: 24),
+                // Apple 로그인 (Apple HIG: 다른 소셜 로그인보다 동등 이상 위치)
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: SignInWithAppleButton(
+                    onPressed: () => _handleAppleLogin(),
+                    style: SignInWithAppleButtonStyle.black,
+                    text: 'Apple로 시작하기',
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 // 카카오 로그인
                 _buildSocialLoginButton(
                   onPressed: _handleKakaoLogin,
@@ -260,15 +274,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   textColor: const Color(0xFF191919),
                   icon: Icons.chat_bubble,
                   text: '카카오로 시작하기',
-                ),
-                const SizedBox(height: 12),
-                // Apple 로그인
-                _buildSocialLoginButton(
-                  onPressed: _handleAppleLogin,
-                  backgroundColor: Colors.black,
-                  textColor: Colors.white,
-                  icon: Icons.apple,
-                  text: 'Apple로 시작하기',
                 ),
               ],
               const SizedBox(height: 24),

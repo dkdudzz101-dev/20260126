@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
 import '../config/supabase_config.dart';
@@ -34,13 +35,19 @@ class OreumService {
 
   // 오름 ID로 가져오기
   Future<OreumModel?> getOreumById(String id) async {
-    final response = await _client
-        .from('oreums')
-        .select()
-        .eq('id', id)
-        .single();
+    try {
+      final response = await _client
+          .from('oreums')
+          .select()
+          .eq('id', id)
+          .maybeSingle();
 
-    return OreumModel.fromJson(response);
+      if (response == null) return null;
+      return OreumModel.fromJson(response);
+    } catch (e) {
+      debugPrint('오름 조회 오류: $e');
+      return null;
+    }
   }
 
   // 카테고리별 오름 가져오기 (활성화된 오름만)
@@ -92,8 +99,9 @@ class OreumService {
         .from('themes')
         .select('id')
         .eq('key', themeKey)
-        .single();
+        .maybeSingle();
 
+    if (themeResponse == null) return [];
     final themeId = themeResponse['id'] as int;
 
     // 2. oreum_themes에서 해당 테마의 oreum_id 목록 가져오기

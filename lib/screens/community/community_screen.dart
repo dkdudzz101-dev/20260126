@@ -14,6 +14,9 @@ import '../../services/report_service.dart';
 import '../../utils/content_filter.dart';
 import '../auth/login_screen.dart';
 import '../oreum/oreum_detail_screen.dart';
+import '../ranking/ranking_screen.dart';
+import '../../services/ranking_service.dart';
+import '../../utils/login_guard.dart';
 
 class CommunityScreen extends StatefulWidget {
   const CommunityScreen({super.key});
@@ -28,6 +31,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   String? _selectedOreumId; // ignore: unused_field
   String? _selectedOreumName;
   final List<String> _filters = ['인기', '최신', '내 글'];
+  List<RankingUser> _topRankers = [];
 
   @override
   void initState() {
@@ -35,7 +39,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<CommunityProvider>().loadBlockedUsers();
       context.read<CommunityProvider>().loadPosts(filter: _selectedFilter);
+      _loadTopRankers();
     });
+  }
+
+  Future<void> _loadTopRankers() async {
+    final rankers = await RankingService.getRanking(limit: 5);
+    if (mounted) setState(() => _topRankers = rankers);
   }
 
   void _onFilterChanged(String filter) {
@@ -84,16 +94,28 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 }
 
                 if (provider.posts.isEmpty) {
-                  return _buildEmptyState();
+                  return ListView(
+                    children: [
+                      if (_topRankers.isNotEmpty) _buildRankingBanner(),
+                      _buildEmptyState(),
+                    ],
+                  );
                 }
 
                 return RefreshIndicator(
-                  onRefresh: () => provider.loadPosts(filter: _selectedFilter),
+                  onRefresh: () async {
+                    await provider.loadPosts(filter: _selectedFilter);
+                    await _loadTopRankers();
+                  },
                   child: ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: provider.posts.length,
+                    itemCount: provider.posts.length + (_topRankers.isNotEmpty ? 1 : 0),
                     itemBuilder: (context, index) {
-                      return _buildPostCard(provider.posts[index]);
+                      if (_topRankers.isNotEmpty && index == 0) {
+                        return _buildRankingBanner();
+                      }
+                      final postIndex = _topRankers.isNotEmpty ? index - 1 : index;
+                      return _buildPostCard(provider.posts[postIndex]);
                     },
                   ),
                 );
@@ -340,6 +362,111 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
+  Widget _buildRankingBanner() {
+    return GestureDetector(
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RankingScreen())),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [AppColors.primary, AppColors.primaryLight],
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.leaderboard, color: Colors.white, size: 20),
+                    SizedBox(width: 8),
+                    Text('오름 랭킹 TOP 5', style: TextStyle(
+                      color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold,
+                    )),
+                  ],
+                ),
+                Text('전체보기 >', style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8), fontSize: 12,
+                )),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: _topRankers.take(5).map((user) {
+                final initial = user.nickname.isNotEmpty ? user.nickname[0].toUpperCase() : '?';
+                return Expanded(
+                  child: Column(
+                    children: [
+                      Stack(
+                        alignment: Alignment.bottomRight,
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white.withValues(alpha: 0.3),
+                              border: Border.all(color: Colors.white, width: 1.5),
+                            ),
+                            child: ClipOval(
+                              child: user.profileImage != null
+                                  ? Image.network(user.profileImage!, fit: BoxFit.cover,
+                                      width: 36, height: 36,
+                                      errorBuilder: (_, __, ___) => Center(
+                                        child: Text(initial, style: const TextStyle(
+                                          color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14,
+                                        )),
+                                      ),
+                                    )
+                                  : Center(
+                                      child: Text(initial, style: const TextStyle(
+                                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14,
+                                      )),
+                                    ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              '${user.rank}',
+                              style: TextStyle(
+                                fontSize: 8, fontWeight: FontWeight.bold,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        user.nickname,
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        'Lv.${user.level}',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 9),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -537,16 +664,20 @@ class _CommunityScreenState extends State<CommunityScreen> {
     VoidCallback onTap,
   ) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: color),
-          const SizedBox(width: 4),
-          Text(
-            count,
-            style: TextStyle(fontSize: 13, color: color),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 4),
+            Text(
+              count,
+              style: TextStyle(fontSize: 13, color: color),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -563,43 +694,17 @@ class _CommunityScreenState extends State<CommunityScreen> {
   void _sharePost(PostModel post) {
     String shareText = '';
     if (post.oreumName != null) {
-      shareText = '[제주오름] ${post.oreumName}\n\n';
+      shareText = '[JEJUOREUM] ${post.oreumName}\n\n';
     }
     shareText += post.content;
-    shareText += '\n\n#제주오름 #오름탐험';
+    shareText += '\n\n#JEJUOREUM #오름탐험';
 
     Share.share(shareText);
   }
 
   void _showWritePostDialog(BuildContext context) {
+    if (!LoginGuard.check(context, message: '글을 작성하려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
     final authProvider = context.read<AuthProvider>();
-
-    if (!authProvider.isLoggedIn) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('로그인 필요'),
-          content: const Text('글을 작성하려면 로그인이 필요합니다.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                );
-              },
-              child: const Text('로그인'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
 
     showModalBottomSheet(
       context: context,
@@ -1712,14 +1817,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   Future<void> _submitComment() async {
+    if (!LoginGuard.check(context, message: '댓글을 작성하려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
     final authProvider = context.read<AuthProvider>();
-
-    if (!authProvider.isLoggedIn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('댓글을 작성하려면 로그인이 필요합니다')),
-      );
-      return;
-    }
 
     // 콘텐츠 필터 체크
     final filterResult = ContentFilter.check(_commentController.text.trim());
@@ -1792,10 +1891,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   void _sharePost() {
     String shareText = '';
     if (widget.post.oreumName != null) {
-      shareText = '[제주오름] ${widget.post.oreumName}\n\n';
+      shareText = '[JEJUOREUM] ${widget.post.oreumName}\n\n';
     }
     shareText += widget.post.content;
-    shareText += '\n\n#제주오름 #오름탐험';
+    shareText += '\n\n#JEJUOREUM #오름탐험';
 
     Share.share(shareText);
   }
@@ -1898,12 +1997,13 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           );
                         }
                       } catch (e) {
+                        debugPrint('에러: $e');
                         if (dialogContext.mounted) {
                           Navigator.pop(dialogContext);
                         }
                         if (ctx.mounted) {
                           ScaffoldMessenger.of(ctx).showSnackBar(
-                            SnackBar(content: Text('신고 실패: $e')),
+                            const SnackBar(content: Text('신고에 실패했습니다. 다시 시도해주세요.')),
                           );
                         }
                       }
@@ -1917,14 +2017,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   void _showBlockConfirmDialog(BuildContext ctx, String userId, String nickname) {
-    // 로그인 체크
+    if (!LoginGuard.check(ctx)) return;
     final authProvider = ctx.read<AuthProvider>();
-    if (!authProvider.isLoggedIn) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
-        const SnackBar(content: Text('로그인이 필요합니다')),
-      );
-      return;
-    }
 
     // 자기 자신 차단 방지
     if (authProvider.user?.id == userId) {
@@ -1983,6 +2077,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   );
                 }
               } catch (e) {
+                debugPrint('차단 에러: $e');
                 if (ctx.mounted) {
                   ScaffoldMessenger.of(ctx).showSnackBar(
                     const SnackBar(content: Text('차단에 실패했습니다. 다시 시도해주세요.')),

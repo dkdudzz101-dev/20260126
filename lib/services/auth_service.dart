@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
 
@@ -80,11 +81,16 @@ class AuthService {
 
   // 프로필 가져오기
   Future<Map<String, dynamic>?> getProfile(String userId) async {
-    final response = await _client
-        .from('users')
-        .select()
-        .eq('id', userId)
-        .single();
-    return response;
+    try {
+      final response = await _client
+          .from('users')
+          .select()
+          .eq('id', userId)
+          .maybeSingle();
+      return response;
+    } catch (e) {
+      debugPrint('프로필 조회 오류: $e');
+      return null;
+    }
   }
 }

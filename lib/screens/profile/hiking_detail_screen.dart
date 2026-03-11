@@ -1,8 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/stamp_provider.dart';
 import '../../services/hiking_route_service.dart';
+import '../../services/stamp_service.dart';
 import '../../services/share_service.dart';
 import '../../widgets/hiking_share_card.dart';
 
@@ -65,91 +68,364 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
     final stamp = widget.stamp;
     final dateStr = '${stamp.stampedAt.year}.${stamp.stampedAt.month.toString().padLeft(2, '0')}.${stamp.stampedAt.day.toString().padLeft(2, '0')}';
 
+    String? selectedPhotoUrl = (_photoUrls != null && _photoUrls!.isNotEmpty) ? _photoUrls!.first : null;
+    File? localPhoto; // 카메라/앨범에서 선택한 로컬 사진
+    final toggles = {
+      'date': true,
+      'distance': true,
+      'time': true,
+      'steps': true,
+      'calories': stamp.calories != null,
+      'altitude': stamp.elevationGain != null,
+    };
+    bool isSharing = false;
+
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                '공유 방식 선택',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            // 선택된 항목들로 정보 문자열 생성
+            final infoParts = <String>[];
+            if (toggles['distance']!) infoParts.add(_formatDistance(stamp.distanceWalked));
+            if (toggles['time']!) infoParts.add(_formatDuration(stamp.timeTaken));
+            if (toggles['steps']!) infoParts.add(_formatSteps(stamp.steps));
+            if (toggles['calories']! && stamp.calories != null) infoParts.add('${stamp.calories}kcal');
+            if (toggles['altitude']! && stamp.elevationGain != null) infoParts.add('+${stamp.elevationGain!.toStringAsFixed(0)}m');
+            if (toggles['date']!) infoParts.add(dateStr);
+
+            return Container(
+              height: MediaQuery.of(sheetContext).size.height * 0.85,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
               ),
-              const SizedBox(height: 20),
-              ListTile(
-                leading: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
+              child: Column(
+                children: [
+                  // 핸들바
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
-                  child: const Icon(Icons.image, color: AppColors.primary),
-                ),
-                title: const Text('카드 이미지로 공유'),
-                subtitle: const Text('기록 카드 이미지 생성'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  try {
-                    final shareCard = HikingShareCard(
-                      oreumName: stamp.oreumName,
-                      date: dateStr,
-                      distanceKm: (stamp.distanceWalked ?? 0) / 1000,
-                      durationMinutes: stamp.timeTaken ?? 0,
-                      steps: stamp.steps ?? 0,
-                    );
-                    await _shareService.shareWidget(
-                      widget: shareCard,
-                      oreumName: stamp.oreumName,
-                    );
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('공유 실패: $e')),
-                      );
-                    }
-                  }
-                },
-              ),
-              const SizedBox(height: 8),
-              ListTile(
-                leading: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '공유 카드 설정',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  child: const Icon(Icons.text_fields, color: Colors.blue),
-                ),
-                title: const Text('텍스트로 공유'),
-                subtitle: const Text('등반 기록 텍스트'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  try {
-                    await _shareService.shareText(
-                      oreumName: stamp.oreumName,
-                      distanceKm: (stamp.distanceWalked ?? 0) / 1000,
-                      durationMinutes: stamp.timeTaken ?? 0,
-                      steps: stamp.steps,
-                    );
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('공유 실패: $e')),
-                      );
-                    }
-                  }
-                },
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        children: [
+                          // 미리보기
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: SizedBox(
+                              width: double.infinity,
+                              height: 280,
+                              child: (localPhoto != null || selectedPhotoUrl != null)
+                                  ? Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        if (localPhoto != null)
+                                          Image.file(localPhoto!, fit: BoxFit.cover)
+                                        else
+                                          Image.network(selectedPhotoUrl!, fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) => Container(
+                                              color: Colors.grey[300],
+                                              child: const Icon(Icons.broken_image, size: 48),
+                                            ),
+                                          ),
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              begin: Alignment.topCenter,
+                                              end: Alignment.bottomCenter,
+                                              colors: [
+                                                Colors.black.withValues(alpha: 0.15),
+                                                Colors.transparent,
+                                                Colors.black.withValues(alpha: 0.7),
+                                              ],
+                                              stops: const [0.0, 0.3, 1.0],
+                                            ),
+                                          ),
+                                        ),
+                                        // 워터마크
+                                        Positioned(
+                                          top: 12, right: 12,
+                                          child: Text('JEJUOREUM', style: TextStyle(
+                                            color: Colors.white.withValues(alpha: 0.85),
+                                            fontSize: 12, fontWeight: FontWeight.w700,
+                                            letterSpacing: 2.0,
+                                          )),
+                                        ),
+                                        Positioned(
+                                          bottom: 0, left: 0, right: 0,
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(16),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(stamp.oreumName, style: const TextStyle(
+                                                  color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold,
+                                                )),
+                                                if (infoParts.isNotEmpty) ...[
+                                                  const SizedBox(height: 4),
+                                                  Text(infoParts.join('  |  '), style: TextStyle(
+                                                    color: Colors.white.withValues(alpha: 0.85), fontSize: 11,
+                                                  )),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : Container(
+                                      color: Colors.grey[200],
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.terrain, size: 48, color: Colors.grey[400]),
+                                          const SizedBox(height: 8),
+                                          Text(stamp.oreumName, style: TextStyle(
+                                            fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey[600],
+                                          )),
+                                          if (infoParts.isNotEmpty) ...[
+                                            const SizedBox(height: 4),
+                                            Text(infoParts.join('  |  '), style: TextStyle(
+                                              fontSize: 11, color: Colors.grey[500],
+                                            )),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          // 카메라/앨범/기존사진 선택 버튼
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () async {
+                                    final picked = await ImagePicker().pickImage(source: ImageSource.camera);
+                                    if (picked != null) {
+                                      setModalState(() {
+                                        localPhoto = File(picked.path);
+                                        selectedPhotoUrl = null;
+                                      });
+                                    }
+                                  },
+                                  icon: const Icon(Icons.camera_alt, size: 18),
+                                  label: const Text('카메라'),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () async {
+                                    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+                                    if (picked != null) {
+                                      setModalState(() {
+                                        localPhoto = File(picked.path);
+                                        selectedPhotoUrl = null;
+                                      });
+                                    }
+                                  },
+                                  icon: const Icon(Icons.photo_library, size: 18),
+                                  label: const Text('앨범'),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                ),
+                              ),
+                              if (localPhoto != null && (_photoUrls != null && _photoUrls!.isNotEmpty)) ...[
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () {
+                                      setModalState(() {
+                                        localPhoto = null;
+                                        selectedPhotoUrl = _photoUrls!.first;
+                                      });
+                                    },
+                                    icon: const Icon(Icons.restore, size: 18),
+                                    label: const Text('원래 사진'),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // 기존 사진 썸네일 (여러 장일 때)
+                          if (localPhoto == null && _photoUrls != null && _photoUrls!.length > 1) ...[
+                            SizedBox(
+                              height: 64,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: _photoUrls!.length,
+                                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                                itemBuilder: (context, index) {
+                                  final isSelected = selectedPhotoUrl == _photoUrls![index];
+                                  return GestureDetector(
+                                    onTap: () {
+                                      setModalState(() => selectedPhotoUrl = _photoUrls![index]);
+                                    },
+                                    child: Container(
+                                      width: 64,
+                                      height: 64,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: isSelected ? AppColors.primary : Colors.transparent,
+                                          width: 2,
+                                        ),
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Image.network(_photoUrls![index], fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) => Container(color: Colors.grey[300]),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          // 토글 옵션
+                          _buildToggle('날짜', Icons.calendar_today, toggles['date']!, (v) {
+                            setModalState(() => toggles['date'] = v);
+                          }),
+                          _buildToggle('거리', Icons.straighten, toggles['distance']!, (v) {
+                            setModalState(() => toggles['distance'] = v);
+                          }),
+                          _buildToggle('시간', Icons.schedule, toggles['time']!, (v) {
+                            setModalState(() => toggles['time'] = v);
+                          }),
+                          _buildToggle('걸음수', Icons.directions_walk, toggles['steps']!, (v) {
+                            setModalState(() => toggles['steps'] = v);
+                          }),
+                          if (stamp.calories != null)
+                            _buildToggle('칼로리', Icons.local_fire_department, toggles['calories']!, (v) {
+                              setModalState(() => toggles['calories'] = v);
+                            }),
+                          if (stamp.elevationGain != null)
+                            _buildToggle('고도', Icons.trending_up, toggles['altitude']!, (v) {
+                              setModalState(() => toggles['altitude'] = v);
+                            }),
+                          const SizedBox(height: 16),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // 공유하기 버튼
+                  Padding(
+                    padding: EdgeInsets.only(
+                      left: 20, right: 20, bottom: MediaQuery.of(sheetContext).padding.bottom + 16, top: 8,
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: isSharing ? null : () async {
+                          setModalState(() => isSharing = true);
+                          try {
+                            // 경로 좌표 변환
+                            List<Map<String, double>>? routePts;
+                            if (_routeData != null && _routeData!.length >= 2) {
+                              routePts = _routeData!.map((p) => {
+                                'lat': (p['lat'] as num).toDouble(),
+                                'lng': (p['lng'] as num).toDouble(),
+                              }).toList();
+                            }
+                            final shareCard = HikingShareCard(
+                              oreumName: stamp.oreumName,
+                              date: toggles['date']! ? dateStr : null,
+                              distanceKm: toggles['distance']! ? (stamp.distanceWalked ?? 0) / 1000 : null,
+                              durationMinutes: toggles['time']! ? (stamp.timeTaken ?? 0) : null,
+                              steps: toggles['steps']! ? (stamp.steps ?? 0) : null,
+                              photoUrl: localPhoto == null ? selectedPhotoUrl : null,
+                              localPhotoFile: localPhoto,
+                              calories: toggles['calories']! ? stamp.calories : null,
+                              elevationGain: toggles['altitude']! ? stamp.elevationGain : null,
+                              routePoints: routePts,
+                            );
+                            final imagePath = await _shareService.captureWidget(widget: shareCard);
+
+                            if (!mounted) return;
+                            Navigator.pop(sheetContext);
+
+                            await _shareService.shareImage(
+                              imagePath: imagePath,
+                              oreumName: stamp.oreumName,
+                              text: '${stamp.oreumName} 등반 완료!\n#JEJUOREUM #등산',
+                            );
+                          } catch (e) {
+                            debugPrint('에러: $e');
+                            setModalState(() => isSharing = false);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('공유에 실패했습니다.')),
+                              );
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: isSharing
+                            ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                            : const Text('공유하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildToggle(String label, IconData icon, bool value, ValueChanged<bool> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Colors.grey[600]),
+          const SizedBox(width: 12),
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 15))),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeColor: AppColors.primary,
           ),
-        ),
+        ],
       ),
     );
   }
@@ -273,6 +549,41 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+
+          // 메모
+          GestureDetector(
+            onTap: () => _showEditMemoDialog(),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.edit_note, color: AppColors.primary, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.stamp.memo != null && widget.stamp.memo!.isNotEmpty
+                          ? widget.stamp.memo!
+                          : '메모를 추가하세요',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: widget.stamp.memo != null && widget.stamp.memo!.isNotEmpty
+                            ? AppColors.textPrimary
+                            : AppColors.textHint,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: AppColors.textHint, size: 18),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 16),
 
@@ -423,6 +734,63 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditMemoDialog() {
+    final controller = TextEditingController(text: widget.stamp.memo ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('메모 수정'),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          maxLength: 100,
+          decoration: const InputDecoration(
+            hintText: '이 등반에 대한 메모를 남겨보세요',
+            border: OutlineInputBorder(),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final memo = controller.text.trim();
+              Navigator.pop(ctx);
+
+              try {
+                final stampService = StampService();
+                await stampService.updateLatestRecordMemo(
+                  oreumId: widget.stamp.oreumId,
+                  memo: memo,
+                );
+                setState(() {
+                  widget.stamp.memo = memo.isEmpty ? null : memo;
+                });
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('메모가 저장되었습니다')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('메모 저장에 실패했습니다')),
+                  );
+                }
+              }
+            },
+            child: const Text('저장'),
+          ),
         ],
       ),
     );

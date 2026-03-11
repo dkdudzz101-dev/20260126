@@ -79,9 +79,10 @@ class _OreumErrorReportScreenState extends State<OreumErrorReportScreen> {
         });
       }
     } catch (e) {
+      debugPrint('에러: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('위치를 가져올 수 없습니다: $e')),
+          const SnackBar(content: Text('위치를 가져올 수 없습니다.')),
         );
       }
     } finally {
@@ -354,11 +355,12 @@ class _OreumErrorReportScreenState extends State<OreumErrorReportScreen> {
           ),
         );
       } catch (e) {
+        debugPrint('에러: $e');
         setState(() => _isSubmitting = false);
         if (!mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('오류가 발생했습니다: $e')),
+          const SnackBar(content: Text('오류가 발생했습니다. 다시 시도해주세요.')),
         );
       }
     }

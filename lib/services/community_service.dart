@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
 
@@ -27,6 +28,18 @@ class CommunityService {
     return List<Map<String, dynamic>>.from(response);
   }
 
+  // 오름별 게시글 가져오기
+  Future<List<Map<String, dynamic>>> getPostsByOreum(String oreumId, {int limit = 20}) async {
+    final response = await _client
+        .from('posts')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .eq('oreum_id', oreumId)
+        .order('created_at', ascending: false)
+        .limit(limit);
+
+    return List<Map<String, dynamic>>.from(response);
+  }
+
   // 내 게시글 가져오기
   Future<List<Map<String, dynamic>>> getMyPosts() async {
     final userId = _client.auth.currentUser?.id;
@@ -43,13 +56,18 @@ class CommunityService {
 
   // 게시글 상세 가져오기
   Future<Map<String, dynamic>?> getPostById(String postId) async {
-    final response = await _client
-        .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
-        .eq('id', postId)
-        .single();
+    try {
+      final response = await _client
+          .from('posts')
+          .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+          .eq('id', postId)
+          .maybeSingle();
 
-    return response;
+      return response;
+    } catch (e) {
+      debugPrint('게시글 조회 오류: $e');
+      return null;
+    }
   }
 
   // 게시글 작성

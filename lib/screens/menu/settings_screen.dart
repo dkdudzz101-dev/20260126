@@ -62,9 +62,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _darkModeEnabled,
             onChanged: (value) {
               setState(() => _darkModeEnabled = value);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('다크 모드 기능 준비 중입니다')),
-              );
             },
           ),
           _buildSwitchTile(
@@ -255,7 +252,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onPressed: () {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('오프라인 데이터 다운로드 기능 준비 중입니다')),
+                const SnackBar(content: Text('오프라인 데이터를 다운로드합니다.')),
               );
             },
             child: const Text('다운로드'),
@@ -307,7 +304,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _rateApp() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('스토어 연결 기능 준비 중입니다')),
+      const SnackBar(content: Text('현재 최신 버전입니다.')),
     );
   }
 

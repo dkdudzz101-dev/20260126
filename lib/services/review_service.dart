@@ -92,7 +92,7 @@ class ReviewService {
           .select()
           .eq('user_id', userId)
           .eq('oreum_id', oreumId)
-          .single();
+          .maybeSingle();
       return response;
     } catch (e) {
       return null;

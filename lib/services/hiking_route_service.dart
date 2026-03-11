@@ -91,13 +91,15 @@ class HikingRouteService {
     }
   }
 
-  /// 경로 및 사진 조회 (stamp_id로)
+  /// 경로 및 사진 조회 (stamp_id로, 최신 경로 반환)
   Future<Map<String, dynamic>?> getRouteWithPhotos(String stampId) async {
     try {
       final response = await _client
           .from('hiking_routes')
           .select('route_data, photo_urls')
           .eq('stamp_id', stampId)
+          .order('created_at', ascending: false)
+          .limit(1)
           .maybeSingle();
 
       return response;
@@ -107,13 +109,15 @@ class HikingRouteService {
     }
   }
 
-  /// hiking_log_id로 경로 조회
+  /// hiking_log_id로 경로 조회 (최신 경로 반환)
   Future<Map<String, dynamic>?> getRouteByLogId(String logId) async {
     try {
       final response = await _client
           .from('hiking_routes')
           .select('route_data, photo_urls')
           .eq('hiking_log_id', logId)
+          .order('created_at', ascending: false)
+          .limit(1)
           .maybeSingle();
 
       return response;

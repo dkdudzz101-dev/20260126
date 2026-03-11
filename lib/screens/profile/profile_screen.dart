@@ -12,7 +12,10 @@ import '../../models/badge_model.dart';
 import '../../services/background_location_service.dart';
 import '../auth/login_screen.dart';
 import '../menu/blocked_users_screen.dart';
+import '../ranking/ranking_screen.dart';
+import '../../services/ranking_service.dart';
 import 'hiking_detail_screen.dart';
+import '../exercise/exercise_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -24,6 +27,7 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final ImagePicker _picker = ImagePicker();
   bool _isBackgroundServiceRunning = false;
+  int? _myRank;
 
   @override
   void initState() {
@@ -31,7 +35,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _checkBackgroundService();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadBadges();
+      _loadMyRank();
     });
+  }
+
+  Future<void> _loadMyRank() async {
+    final rank = await RankingService.getMyRank();
+    if (mounted) setState(() => _myRank = rank);
   }
 
   Future<void> _checkBackgroundService() async {
@@ -114,10 +124,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     } catch (e) {
+      debugPrint('에러: $e');
       if (dialogContext.mounted) {
         ScaffoldMessenger.of(dialogContext).hideCurrentSnackBar();
         ScaffoldMessenger.of(dialogContext).showSnackBar(
-          SnackBar(content: Text('이미지 업로드 실패: $e')),
+          const SnackBar(content: Text('이미지 업로드에 실패했습니다.')),
         );
       }
     }
@@ -297,21 +308,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
-            Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Text(
-              'Lv.$level',
-              style: const TextStyle(
-                fontSize: 13,
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
+            GestureDetector(
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RankingScreen())),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_myRank != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: const BorderRadius.horizontal(left: Radius.circular(16)),
+                      ),
+                      child: Text(
+                        '${_myRank}위',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: _myRank != null
+                          ? const BorderRadius.horizontal(right: Radius.circular(16))
+                          : BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      'Lv.$level',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
         ],
         ),
       ),
@@ -587,26 +624,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     child: Row(
                       children: [
-                        Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: stamp.imageUrl != null
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Image.network(
-                                    stamp.imageUrl!,
-                                    fit: BoxFit.cover,
-                                    width: 44,
-                                    height: 44,
-                                    errorBuilder: (_, __, ___) =>
-                                        const Icon(Icons.terrain, color: AppColors.primary, size: 24),
+                        Stack(
+                          children: [
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: stamp.imageUrl != null
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.network(
+                                        stamp.imageUrl!,
+                                        fit: BoxFit.cover,
+                                        width: 44,
+                                        height: 44,
+                                        errorBuilder: (_, __, ___) =>
+                                            const Icon(Icons.terrain, color: AppColors.primary, size: 24),
+                                      ),
+                                    )
+                                  : const Icon(Icons.terrain, color: AppColors.primary, size: 24),
+                            ),
+                            if (stampProvider.getVisitCount(stamp.oreumId) > 1)
+                              Positioned(
+                                top: -2,
+                                right: -2,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    borderRadius: BorderRadius.circular(7),
                                   ),
-                                )
-                              : const Icon(Icons.terrain, color: AppColors.primary, size: 24),
+                                  child: Text(
+                                    'x${stampProvider.getVisitCount(stamp.oreumId)}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -658,6 +719,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       child: Column(
         children: [
+          _buildMenuItem(
+            icon: Icons.directions_walk,
+            title: '일반 운동',
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ExerciseScreen())),
+          ),
+          const Divider(height: 1),
+          _buildMenuItem(
+            icon: Icons.leaderboard_outlined,
+            title: '랭킹',
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RankingScreen())),
+          ),
+          const Divider(height: 1),
           _buildMenuItem(
             icon: Icons.bookmark_outline,
             title: '저장한 오름',
