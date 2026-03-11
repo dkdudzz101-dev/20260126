@@ -13,6 +13,7 @@ import 'providers/community_provider.dart';
 import 'providers/badge_provider.dart';
 import 'services/pedometer_service.dart';
 import 'services/background_location_service.dart';
+import 'services/force_update_service.dart';
 
 void main() async {
   // 글로벌 에러 핸들러 - Supabase가 카카오 딥링크를 처리하려고 할 때 발생하는 에러를 무시
@@ -78,8 +79,30 @@ class MyApp extends StatelessWidget {
         title: '제주오름',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.lightTheme,
-        home: const MainTabScreen(),
+        home: const _AppHome(),
       ),
     );
+  }
+}
+
+class _AppHome extends StatefulWidget {
+  const _AppHome();
+
+  @override
+  State<_AppHome> createState() => _AppHomeState();
+}
+
+class _AppHomeState extends State<_AppHome> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ForceUpdateService.checkForUpdate(context);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const MainTabScreen();
   }
 }

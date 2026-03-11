@@ -14,21 +14,7 @@ class ShareService {
     String? text,
   }) async {
     try {
-      // 위젯 캡처
-      final imageBytes = await screenshotController.captureFromWidget(
-        Material(
-          color: Colors.transparent,
-          child: widget,
-        ),
-        pixelRatio: 3.0,
-        delay: const Duration(milliseconds: 100),
-      );
-
-      // 임시 파일로 저장
-      final directory = await getTemporaryDirectory();
-      final imagePath = '${directory.path}/jeju_oreum_${DateTime.now().millisecondsSinceEpoch}.png';
-      final imageFile = File(imagePath);
-      await imageFile.writeAsBytes(imageBytes);
+      final imagePath = await captureWidget(widget: widget);
 
       // 공유
       await Share.shareXFiles(
@@ -39,6 +25,7 @@ class ShareService {
 
       // 임시 파일 삭제 (일정 시간 후)
       Future.delayed(const Duration(minutes: 5), () {
+        final imageFile = File(imagePath);
         if (imageFile.existsSync()) {
           imageFile.deleteSync();
         }
@@ -47,6 +34,37 @@ class ShareService {
       debugPrint('공유 실패: $e');
       rethrow;
     }
+  }
+
+  /// 위젯을 이미지로 캡처하고 파일 경로 반환 (공유 없이)
+  Future<String> captureWidget({required Widget widget}) async {
+    final imageBytes = await screenshotController.captureFromWidget(
+      Material(
+        color: Colors.transparent,
+        child: widget,
+      ),
+      pixelRatio: 3.0,
+      delay: const Duration(milliseconds: 100),
+    );
+
+    final directory = await getTemporaryDirectory();
+    final imagePath = '${directory.path}/jeju_oreum_${DateTime.now().millisecondsSinceEpoch}.png';
+    final imageFile = File(imagePath);
+    await imageFile.writeAsBytes(imageBytes);
+    return imagePath;
+  }
+
+  /// 이미 캡처된 이미지 파일을 공유
+  Future<void> shareImage({
+    required String imagePath,
+    required String oreumName,
+    String? text,
+  }) async {
+    await Share.shareXFiles(
+      [XFile(imagePath)],
+      text: text ?? '$oreumName 등반 완료! #제주오름 #등산',
+      subject: '제주오름 등반 기록',
+    );
   }
 
   /// 텍스트만 공유

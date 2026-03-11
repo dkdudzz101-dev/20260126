@@ -79,7 +79,7 @@ class StampModel {
     return StampModel(
       id: json['id']?.toString() ?? '',
       oreumId: json['oreum_id'] ?? '',
-      oreumName: oreum?['name'] ?? json['oreum_id'] ?? '오름',
+      oreumName: oreum?['name'] ?? (json['oreum_id'] != null && json['oreum_id'].toString().isNotEmpty ? json['oreum_id'] : '일반 운동'),
       stampedAt: DateTime.tryParse(json['record_date'] ?? json['completed_at'] ?? json['hiked_at'] ?? '') ?? DateTime.now(),
       lat: (json['lat'] ?? 0.0).toDouble(),
       lng: (json['lng'] ?? 0.0).toDouble(),
@@ -108,6 +108,8 @@ class StampProvider extends ChangeNotifier {
 
   List<StampModel> _stamps = [];
   Set<String> _stampedOreumIds = {}; // 완등(stamp)만
+  Set<String> _allCertifiedOreumIds = {}; // 모든 사용자 인증 오름
+  Map<String, int> _visitCounts = {}; // 오름별 방문 횟수
   bool _isLoading = false;
   String? _error;
   Position? _currentPosition;
@@ -124,7 +126,12 @@ class StampProvider extends ChangeNotifier {
   double get totalDistance => _totalDistance;
   int get totalSteps => _totalSteps;
 
+  Set<String> get allCertifiedOreumIds => _allCertifiedOreumIds;
   bool isStamped(String oreumId) => _stampedOreumIds.contains(oreumId);
+  bool isAnyCertified(String oreumId) => _allCertifiedOreumIds.contains(oreumId);
+
+  // 오름별 방문 횟수 (스탬프 + 등산기록 합산)
+  int getVisitCount(String oreumId) => _visitCounts[oreumId] ?? 0;
 
   // 스탬프 목록 로드 (Supabase에서)
   Future<void> loadStamps() async {
@@ -135,6 +142,7 @@ class StampProvider extends ChangeNotifier {
       final stampData = await _stampService.getUserStamps();
       _stamps.clear();
       _stampedOreumIds.clear();
+      _visitCounts.clear();
 
       for (final data in stampData) {
         final stamp = StampModel.fromJson(data);
@@ -143,9 +151,16 @@ class StampProvider extends ChangeNotifier {
         if (stamp.isStamp) {
           _stampedOreumIds.add(stamp.oreumId);
         }
+        // 방문 횟수 집계 (완등 stamp만)
+        if (stamp.isStamp) {
+          _visitCounts[stamp.oreumId] = (_visitCounts[stamp.oreumId] ?? 0) + 1;
+        }
       }
       // 날짜순 정렬 (최신순)
       _stamps.sort((a, b) => b.stampedAt.compareTo(a.stampedAt));
+
+      // 전체 사용자 인증 오름 로드
+      _allCertifiedOreumIds = await _stampService.getAllCertifiedOreumIds();
 
       // 총 이동거리/걸음수 로드
       _totalDistance = await _stampService.getTotalDistance();

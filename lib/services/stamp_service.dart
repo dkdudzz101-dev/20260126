@@ -134,6 +134,50 @@ class StampService {
     return logId;
   }
 
+  // 일반 운동 기록 저장 (오름 없이)
+  Future<String?> recordExerciseLog({
+    double? distanceWalked,
+    int? timeTaken,
+    int? steps,
+    double? avgSpeed,
+    int? calories,
+    double? elevationGain,
+    double? elevationLoss,
+    double? maxAltitude,
+    double? minAltitude,
+    String? memo,
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('로그인이 필요합니다');
+
+    final response = await _client.from('hiking_logs').insert({
+      'user_id': userId,
+      'oreum_id': null,
+      'distance_walked': distanceWalked,
+      'time_taken': timeTaken,
+      'steps': steps,
+      'avg_speed': avgSpeed,
+      'calories': calories,
+      'elevation_gain': elevationGain,
+      'elevation_loss': elevationLoss,
+      'max_altitude': maxAltitude,
+      'min_altitude': minAltitude,
+      'memo': memo,
+      'hiked_at': DateTime.now().toIso8601String(),
+    }).select('id').single();
+
+    final logId = response['id']?.toString();
+
+    if (distanceWalked != null && distanceWalked > 0) {
+      await _updateTotalDistance(userId, distanceWalked);
+    }
+    if (steps != null && steps > 0) {
+      await _updateTotalSteps(userId, steps);
+    }
+
+    return logId;
+  }
+
   // 총 걸음수 업데이트
   Future<void> _updateTotalSteps(String userId, int steps) async {
     try {
@@ -254,6 +298,18 @@ class StampService {
         .eq('oreum_id', oreumId);
 
     return (response as List).isNotEmpty;
+  }
+
+  // 전체 사용자가 인증한 오름 ID 목록 가져오기
+  Future<Set<String>> getAllCertifiedOreumIds() async {
+    final response = await _client
+        .from('stamps')
+        .select('oreum_id');
+
+    return (response as List)
+        .map((r) => r['oreum_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
   }
 
   // 총 이동거리 업데이트

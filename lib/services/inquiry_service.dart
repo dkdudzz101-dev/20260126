@@ -10,6 +10,7 @@ class InquiryService {
     'error': '오류 신고',
     'feature': '기능 제안',
     'account': '계정 문의',
+    'oreum_request': '오름 추가 요청',
     'other': '기타',
   };
 

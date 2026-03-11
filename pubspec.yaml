@@ -1,7 +1,7 @@
 name: jeju_app
 description: "제주 오름 탐험 앱"
 publish_to: 'none'
-version: 1.4.0+24
+version: 1.4.1+25
 
 environment:
   sdk: ^3.5.0
@@ -30,6 +30,11 @@ dependencies:
   kakao_flutter_sdk: ^1.9.6
   flutter_naver_login: ^2.1.1
   sign_in_with_apple: ^6.1.4
+
+  # 카메라 & 나침반 (AR)
+  camera: ^0.11.0+2
+  flutter_compass: ^0.8.0
+  sensors_plus: ^6.1.1
 
   # 이미지
   cached_network_image: ^3.3.1
@@ -73,6 +78,7 @@ dependencies:
 
   # 화면 캡처 (공유용)
   screenshot: ^3.0.0
+  package_info_plus: ^9.0.0
 
 dev_dependencies:
   flutter_test:

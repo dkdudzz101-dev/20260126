@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/oreum_provider.dart';
 import '../../providers/stamp_provider.dart';
 import '../../models/oreum_model.dart';
+import '../../services/inquiry_service.dart';
+import '../../utils/login_guard.dart';
 import 'oreum_detail_screen.dart';
 
 class OreumSearchScreen extends StatefulWidget {
@@ -17,15 +20,18 @@ class OreumSearchScreen extends StatefulWidget {
 
 class _OreumSearchScreenState extends State<OreumSearchScreen> {
   final _searchController = TextEditingController();
+  String _stampFilter = '전체'; // 전체, 인증, 미인증
   String? _selectedDifficulty;
-  String? _selectedTrailStatus; // 'verified' or 'checking'
-  int _selectedTab = 0; // 0: 인증된 오름, 1: 미인증 오름
+  String? _selectedTrailStatus;
+  String _sortBy = '이름순'; // 이름순, 거리순, 난이도순
   List<OreumModel> _filteredOreums = [];
+  Position? _currentPosition;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _tryLoadPosition();
       _filterOreums();
     });
   }
@@ -36,43 +42,86 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
     super.dispose();
   }
 
-  List<OreumModel> _getBaseList() {
-    final oreumProvider = context.read<OreumProvider>();
-    final stampProvider = context.read<StampProvider>();
+  Future<void> _tryLoadPosition() async {
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) return;
+      final pos = await Geolocator.getCurrentPosition();
+      if (mounted) setState(() => _currentPosition = pos);
+    } catch (_) {}
+  }
 
-    switch (_selectedTab) {
-      case 0: // 인증된 오름
-        return oreumProvider.allOreumsForStamp
-            .where((o) => stampProvider.hasStamp(o.id))
-            .toList();
-      case 1: // 미인증 오름
-        return oreumProvider.allOreumsForStamp
-            .where((o) => !stampProvider.hasStamp(o.id))
-            .toList();
-      default:
-        return oreumProvider.allOreumsForStamp;
+  double? _distanceTo(OreumModel oreum) {
+    if (_currentPosition == null) return null;
+    final lat = oreum.startLat ?? oreum.summitLat;
+    final lng = oreum.startLng ?? oreum.summitLng;
+    if (lat == null || lng == null) return null;
+    return Geolocator.distanceBetween(
+      _currentPosition!.latitude, _currentPosition!.longitude, lat, lng,
+    );
+  }
+
+  int _difficultyOrder(String? d) {
+    switch (d) {
+      case '쉬움': return 0;
+      case '보통': return 1;
+      case '어려움': return 2;
+      default: return 3;
     }
   }
 
   void _filterOreums() {
+    final oreumProvider = context.read<OreumProvider>();
+    final stampProvider = context.read<StampProvider>();
     final query = _searchController.text.toLowerCase();
-    final baseList = _getBaseList();
 
-    setState(() {
-      _filteredOreums = baseList.where((oreum) {
-        final matchesQuery = query.isEmpty ||
-            oreum.name.toLowerCase().contains(query) ||
-            (oreum.trailName?.toLowerCase().contains(query) ?? false);
+    var list = oreumProvider.allOreumsForStamp.where((oreum) {
+      // 검색어
+      final matchesQuery = query.isEmpty ||
+          oreum.name.toLowerCase().contains(query) ||
+          (oreum.trailName?.toLowerCase().contains(query) ?? false);
 
-        final matchesDifficulty = _selectedDifficulty == null ||
-            oreum.difficulty == _selectedDifficulty;
+      // 인증 필터
+      final isStamped = stampProvider.hasStamp(oreum.id);
+      final matchesStamp = _stampFilter == '전체' ||
+          (_stampFilter == '인증' && isStamped) ||
+          (_stampFilter == '미인증' && !isStamped);
 
-        final matchesTrailStatus = _selectedTrailStatus == null ||
-            (oreum.trailStatus ?? 'checking') == _selectedTrailStatus;
+      // 난이도
+      final matchesDifficulty = _selectedDifficulty == null ||
+          oreum.difficulty == _selectedDifficulty;
 
-        return matchesQuery && matchesDifficulty && matchesTrailStatus;
-      }).toList();
-    });
+      // 등산로 상태
+      final matchesTrailStatus = _selectedTrailStatus == null ||
+          (oreum.trailStatus ?? 'checking') == _selectedTrailStatus;
+
+      return matchesQuery && matchesStamp && matchesDifficulty && matchesTrailStatus;
+    }).toList();
+
+    // 정렬
+    switch (_sortBy) {
+      case '이름순':
+        list.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case '거리순':
+        if (_currentPosition != null) {
+          list.sort((a, b) {
+            final da = _distanceTo(a);
+            final db = _distanceTo(b);
+            if (da == null && db == null) return 0;
+            if (da == null) return 1;
+            if (db == null) return -1;
+            return da.compareTo(db);
+          });
+        }
+        break;
+      case '난이도순':
+        list.sort((a, b) => _difficultyOrder(a.difficulty).compareTo(_difficultyOrder(b.difficulty)));
+        break;
+    }
+
+    setState(() => _filteredOreums = list);
   }
 
   @override
@@ -90,84 +139,18 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
       ),
       body: Column(
         children: [
-          _buildTabSelector(),
           _buildSearchBar(),
-          _buildFilterChips(),
+          _buildFilters(),
+          _buildResultCount(),
           Expanded(child: _buildOreumList()),
         ],
       ),
     );
   }
 
-  Widget _buildTabSelector() {
-    final stampProvider = context.watch<StampProvider>();
-    final oreumProvider = context.watch<OreumProvider>();
-    final stampedCount = oreumProvider.allOreumsForStamp
-        .where((o) => stampProvider.hasStamp(o.id))
-        .length;
-    final unstampedCount = oreumProvider.allOreumsForStamp
-        .where((o) => !stampProvider.hasStamp(o.id))
-        .length;
-
-    final tabs = [
-      {'label': '인증된 오름', 'count': stampedCount},
-      {'label': '미인증 오름', 'count': unstampedCount},
-    ];
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: List.generate(tabs.length, (index) {
-          final isSelected = _selectedTab == index;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _selectedTab = index;
-                });
-                _filterOreums();
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: isSelected ? AppColors.primary : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      tabs[index]['label'] as String,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: isSelected ? Colors.white : AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${tabs[index]['count']}개',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isSelected ? Colors.white70 : AppColors.textHint,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
   Widget _buildSearchBar() {
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: TextField(
         controller: _searchController,
         onChanged: (_) => _filterOreums(),
@@ -188,65 +171,245 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
     );
   }
 
-  Widget _buildFilterChips() {
-    final difficulties = ['쉬움', '보통', '어려움'];
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
+  Widget _buildFilters() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
         children: [
-          FilterChip(
-            label: const Text('전체'),
-            selected: _selectedDifficulty == null,
-            onSelected: (selected) {
-              setState(() {
-                _selectedDifficulty = null;
-              });
-              _filterOreums();
-            },
+          // 1행: 인증 필터 + 정렬
+          Row(
+            children: [
+              // 인증 필터
+              ..._buildChipGroup(
+                ['전체', '인증', '미인증'],
+                _stampFilter,
+                (val) {
+                  setState(() => _stampFilter = val);
+                  _filterOreums();
+                },
+              ),
+              const Spacer(),
+              // 정렬 드롭다운
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.border),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _sortBy,
+                    isDense: true,
+                    icon: const Icon(Icons.sort, size: 16),
+                    style: const TextStyle(fontSize: 12, color: AppColors.textPrimary),
+                    items: ['이름순', '거리순', '난이도순'].map((s) =>
+                      DropdownMenuItem(value: s, child: Text(s)),
+                    ).toList(),
+                    onChanged: (val) {
+                      if (val == null) return;
+                      if (val == '거리순' && _currentPosition == null) {
+                        _tryLoadPosition().then((_) {
+                          setState(() => _sortBy = val);
+                          _filterOreums();
+                        });
+                        return;
+                      }
+                      setState(() => _sortBy = val);
+                      _filterOreums();
+                    },
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          ...difficulties.map((difficulty) {
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilterChip(
-                label: Text(difficulty),
-                selected: _selectedDifficulty == difficulty,
-                onSelected: (selected) {
+          const SizedBox(height: 8),
+          // 2행: 난이도 + 등산로 상태 (드롭다운 칩)
+          Row(
+            children: [
+              _buildDropdownChip(
+                label: '난이도',
+                value: _selectedDifficulty,
+                items: ['쉬움', '보통', '어려움'],
+                colorMap: {
+                  '쉬움': AppColors.difficultyEasy,
+                  '보통': AppColors.difficultyMedium,
+                  '어려움': AppColors.difficultyHard,
+                },
+                onChanged: (val) {
+                  setState(() => _selectedDifficulty = val);
+                  _filterOreums();
+                },
+              ),
+              const SizedBox(width: 8),
+              _buildDropdownChip(
+                label: '등산로',
+                value: _selectedTrailStatus == 'verified' ? '확인됨' : _selectedTrailStatus == 'checking' ? '미확인' : null,
+                items: ['확인됨', '미확인'],
+                colorMap: {
+                  '확인됨': Colors.green,
+                  '미확인': Colors.orange,
+                },
+                onChanged: (val) {
                   setState(() {
-                    _selectedDifficulty = selected ? difficulty : null;
+                    if (val == '확인됨') _selectedTrailStatus = 'verified';
+                    else if (val == '미확인') _selectedTrailStatus = 'checking';
+                    else _selectedTrailStatus = null;
                   });
                   _filterOreums();
                 },
               ),
-            );
-          }),
-          const SizedBox(width: 8),
-          Container(width: 1, height: 24, color: Colors.grey.shade300),
-          const SizedBox(width: 8),
-          FilterChip(
-            label: const Text('확인됨'),
-            selected: _selectedTrailStatus == 'verified',
-            selectedColor: Colors.green.shade100,
-            onSelected: (selected) {
-              setState(() {
-                _selectedTrailStatus = selected ? 'verified' : null;
-              });
-              _filterOreums();
-            },
+            ],
           ),
-          const SizedBox(width: 8),
-          FilterChip(
-            label: const Text('미확인'),
-            selected: _selectedTrailStatus == 'checking',
-            selectedColor: Colors.orange.shade100,
-            onSelected: (selected) {
-              setState(() {
-                _selectedTrailStatus = selected ? 'checking' : null;
-              });
-              _filterOreums();
-            },
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropdownChip({
+    required String label,
+    required String? value,
+    required List<String> items,
+    required Function(String?) onChanged,
+    Map<String, Color>? colorMap,
+  }) {
+    final isActive = value != null;
+    final activeColor = (isActive && colorMap != null) ? colorMap[value] ?? AppColors.primary : AppColors.primary;
+
+    return GestureDetector(
+      onTap: () {
+        showModalBottomSheet(
+          context: context,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          builder: (ctx) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Row(
+                        children: [
+                          Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          const Spacer(),
+                          if (isActive)
+                            TextButton(
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                onChanged(null);
+                              },
+                              child: const Text('초기화', style: TextStyle(color: AppColors.textSecondary)),
+                            ),
+                        ],
+                      ),
+                    ),
+                    ...items.map((item) {
+                      final selected = value == item;
+                      final itemColor = colorMap?[item] ?? AppColors.primary;
+                      return ListTile(
+                        leading: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: itemColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        title: Text(item),
+                        trailing: selected ? Icon(Icons.check, color: itemColor) : null,
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          onChanged(selected ? null : item);
+                        },
+                      );
+                    }),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isActive ? activeColor.withValues(alpha: 0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: isActive ? activeColor : AppColors.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              isActive ? '$label: $value' : label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                color: isActive ? activeColor : AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              Icons.keyboard_arrow_down,
+              size: 16,
+              color: isActive ? activeColor : AppColors.textSecondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildChipGroup(List<String> items, String selected, Function(String) onTap) {
+    return items.map((item) {
+      final isSelected = selected == item;
+      return Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: GestureDetector(
+          onTap: () => onTap(item),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: isSelected ? AppColors.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isSelected ? AppColors.primary : AppColors.border,
+              ),
+            ),
+            child: Text(
+              item,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isSelected ? Colors.white : AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ),
+      );
+    }).toList();
+  }
+
+  Widget _buildResultCount() {
+    final stampProvider = context.watch<StampProvider>();
+    final stampedCount = _filteredOreums.where((o) => stampProvider.hasStamp(o.id)).length;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: Row(
+        children: [
+          Text(
+            '${_filteredOreums.length}개',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '(인증 $stampedCount개)',
+            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
         ],
       ),
@@ -259,15 +422,30 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              _selectedTab == 0 ? Icons.verified_outlined : Icons.search_off,
-              size: 64,
-              color: AppColors.textHint,
+            Icon(Icons.search_off, size: 64, color: AppColors.textHint),
+            const SizedBox(height: 16),
+            const Text(
+              '조건에 맞는 오름이 없습니다',
+              style: TextStyle(color: AppColors.textSecondary),
             ),
             const SizedBox(height: 16),
-            Text(
-              _selectedTab == 0 ? '아직 인증된 오름이 없습니다' : '모든 오름이 인증되었습니다',
-              style: const TextStyle(color: AppColors.textSecondary),
+            GestureDetector(
+              onTap: _showOreumRequestDialog,
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add_location_alt_outlined, size: 14, color: AppColors.textHint),
+                  SizedBox(width: 4),
+                  Text(
+                    '찾는 오름이 없나요? 추가 요청하기',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.primary,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -277,11 +455,95 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
     return ListView.separated(
       padding: const EdgeInsets.all(16),
       itemCount: _filteredOreums.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final oreum = _filteredOreums[index];
         return _buildOreumCard(oreum);
       },
+    );
+  }
+
+  void _showOreumRequestDialog() {
+    if (!LoginGuard.check(context, message: '오름 추가 요청은 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
+
+    final nameController = TextEditingController();
+    final locationController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('오름 추가 요청', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '목록에 없는 오름 정보를 알려주시면\n검토 후 추가하겠습니다.',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: '오름 이름',
+                hintText: '예: ○○오름',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: locationController,
+              decoration: const InputDecoration(
+                labelText: '위치 정보 (선택)',
+                hintText: '예: 서귀포시 ○○리 근처',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              if (name.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('오름 이름을 입력해주세요')),
+                );
+                return;
+              }
+              try {
+                await InquiryService().createInquiry(
+                  category: 'oreum_request',
+                  email: '',
+                  title: '오름 추가 요청: $name',
+                  content: '오름 이름: $name\n위치: ${locationController.text.trim()}',
+                );
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('오름 추가 요청이 접수되었습니다')),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('요청 전송에 실패했습니다')),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text('요청하기'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -290,14 +552,13 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
     final stampProvider = context.watch<StampProvider>();
     final isBookmarked = oreumProvider.isBookmarked(oreum.id);
     final isStamped = stampProvider.hasStamp(oreum.id);
+    final dist = _distanceTo(oreum);
 
     return GestureDetector(
       onTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (_) => OreumDetailScreen(oreum: oreum),
-          ),
+          MaterialPageRoute(builder: (_) => OreumDetailScreen(oreum: oreum)),
         );
       },
       child: Container(
@@ -307,7 +568,7 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 10,
             ),
           ],
@@ -328,8 +589,7 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
                         oreum.stampUrl!,
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => const Icon(
-                          Icons.terrain,
-                          color: AppColors.textHint,
+                          Icons.terrain, color: AppColors.textHint,
                         ),
                       ),
                     )
@@ -340,12 +600,18 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    oreum.name,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          oreum.name,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (isStamped)
+                        const Icon(Icons.verified, color: Colors.green, size: 18),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Wrap(
@@ -353,33 +619,45 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
                     runSpacing: 4,
                     children: [
                       if (oreum.difficulty != null)
-                        _buildDifficultyBadge(oreum.difficulty!),
-                      _buildTrailStatusBadge(oreum.trailStatus ?? 'checking'),
-                      _buildTrailDataBadge(oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty),
+                        _buildBadge(oreum.difficulty!, _difficultyColor(oreum.difficulty!)),
+                      _buildBadge(
+                        (oreum.trailStatus ?? 'checking') == 'verified' ? '확인됨' : '미확인',
+                        (oreum.trailStatus ?? 'checking') == 'verified' ? Colors.green : Colors.orange,
+                      ),
+                      if (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty)
+                        _buildBadge('등산로', const Color(0xFF2E7D32)),
                       if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
-                        _buildRestrictionBadge(oreum.restriction!),
-                      if (oreum.timeUp != null && oreum.timeUp! > 0)
-                        Text(
-                          '${oreum.timeUp}분',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
+                        _buildBadge(oreum.restriction!, const Color(0xFFB71C1C)),
                     ],
                   ),
+                  if (dist != null || (oreum.timeUp != null && oreum.timeUp! > 0)) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        if (dist != null)
+                          Text(
+                            dist < 1000
+                                ? '${dist.toInt()}m'
+                                : '${(dist / 1000).toStringAsFixed(1)}km',
+                            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                        if (dist != null && oreum.timeUp != null && oreum.timeUp! > 0)
+                          const Text(' · ', style: TextStyle(fontSize: 11, color: AppColors.textHint)),
+                        if (oreum.timeUp != null && oreum.timeUp! > 0)
+                          Text(
+                            '등반 ${oreum.timeUp}분',
+                            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
-            if (isStamped)
-              const Padding(
-                padding: EdgeInsets.only(right: 4),
-                child: Icon(Icons.verified, color: Colors.green, size: 20),
-              ),
             if (isBookmarked)
               const Padding(
                 padding: EdgeInsets.only(right: 4),
-                child: Icon(Icons.star, color: Colors.amber, size: 20),
+                child: Icon(Icons.star, color: Colors.amber, size: 18),
               ),
             const Icon(Icons.chevron_right, color: AppColors.textHint),
           ],
@@ -388,91 +666,26 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
     );
   }
 
-  Widget _buildTrailStatusBadge(String status) {
-    final isVerified = status == 'verified';
-    final color = isVerified ? Colors.green : Colors.orange;
-    final label = isVerified ? '확인됨' : '미확인';
-
+  Widget _buildBadge(String label, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         label,
-        style: TextStyle(
-          fontSize: 10,
-          color: color,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTrailDataBadge(bool hasTrail) {
-    final color = hasTrail ? const Color(0xFF2E7D32) : Colors.grey;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        hasTrail ? '등산로 있음' : '등산로 없음',
         style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w500),
       ),
     );
   }
 
-  Widget _buildRestrictionBadge(String restriction) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: const Color(0xFFB71C1C).withOpacity(0.1),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        restriction,
-        style: const TextStyle(
-          fontSize: 10,
-          color: Color(0xFFB71C1C),
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDifficultyBadge(String difficulty) {
-    Color color;
+  Color _difficultyColor(String difficulty) {
     switch (difficulty) {
-      case '쉬움':
-        color = AppColors.difficultyEasy;
-        break;
-      case '보통':
-        color = AppColors.difficultyMedium;
-        break;
-      case '어려움':
-        color = AppColors.difficultyHard;
-        break;
-      default:
-        color = AppColors.textSecondary;
+      case '쉬움': return AppColors.difficultyEasy;
+      case '보통': return AppColors.difficultyMedium;
+      case '어려움': return AppColors.difficultyHard;
+      default: return AppColors.textSecondary;
     }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        difficulty,
-        style: TextStyle(
-          fontSize: 10,
-          color: color,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
   }
 }

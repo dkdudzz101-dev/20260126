@@ -13,8 +13,11 @@ import '../../services/oreum_service.dart';
 import '../../services/sunrise_service.dart';
 import '../../services/map_service.dart';
 import '../../models/oreum_model.dart';
+import '../../services/ranking_service.dart';
 import '../oreum/oreum_detail_screen.dart';
 import '../oreum/oreum_search_screen.dart';
+import '../ranking/ranking_screen.dart';
+import '../exercise/exercise_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onMenuTap;
@@ -45,6 +48,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // 일출/일몰
   SunTimes? _sunTimes;
+
+  // 랭킹
+  List<RankingUser> _topRankers = [];
 
   @override
   void initState() {
@@ -78,7 +84,14 @@ class _HomeScreenState extends State<HomeScreen> {
       await _loadWeatherAndRecommendation();
       // 위치 기반 가까운 오름 (권한이 이미 있을 때만, 요청 안 함)
       await _loadNearbyOreumsIfPermitted();
+      // 랭킹 로드
+      _loadTopRankers();
     });
+  }
+
+  Future<void> _loadTopRankers() async {
+    final rankers = await RankingService.getRanking(limit: 3);
+    if (mounted) setState(() => _topRankers = rankers);
   }
 
   Future<void> _loadWeatherAndRecommendation() async {
@@ -683,6 +696,66 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildExerciseQuickStart() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ExerciseScreen()),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.directions_walk, color: Colors.white, size: 28),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '일반 운동 시작',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      '오름 선택 없이 자유롭게 걷기/달리기',
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, color: Colors.white70, size: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildNearbyOreums() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -824,6 +897,119 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildMiniRanking() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RankingScreen())),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.leaderboard, color: AppColors.primary, size: 22),
+                    SizedBox(width: 6),
+                    Text('오름 랭킹', style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold,
+                    )),
+                  ],
+                ),
+                Text('전체보기', style: TextStyle(
+                  fontSize: 13, color: AppColors.primary, fontWeight: FontWeight.w500,
+                )),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              children: _topRankers.map((user) {
+                final initial = user.nickname.isNotEmpty ? user.nickname[0].toUpperCase() : '?';
+                final medalColors = [const Color(0xFFD4A853), const Color(0xFFA8A8A8), const Color(0xFFB87333)];
+                final medalColor = user.rank <= 3 ? medalColors[user.rank - 1] : AppColors.textHint;
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 22,
+                        height: 22,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: medalColor,
+                        ),
+                        child: Center(
+                          child: Text('${user.rank}', style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white,
+                          )),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.primary,
+                          border: Border.all(color: medalColor, width: 1.5),
+                        ),
+                        child: ClipOval(
+                          child: user.profileImage != null
+                              ? Image.network(user.profileImage!, fit: BoxFit.cover,
+                                  width: 32, height: 32,
+                                  errorBuilder: (_, __, ___) => Center(
+                                    child: Text(initial, style: const TextStyle(
+                                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12,
+                                    )),
+                                  ),
+                                )
+                              : Center(
+                                  child: Text(initial, style: const TextStyle(
+                                    color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12,
+                                  )),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(user.nickname, style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w500,
+                        )),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          'Lv.${user.level}',
+                          style: TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
