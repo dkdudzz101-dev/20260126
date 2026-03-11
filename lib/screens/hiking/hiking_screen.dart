@@ -207,9 +207,14 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
         }
 
         // '기타' 제외한 시설물만 필터링
+        debugPrint('=== 시설물 전체: ${trailData.facilities.length}개 ===');
+        for (final f in trailData.facilities) {
+          debugPrint('  타입: ${f.type}, 설명: ${f.description}, 위치: ${f.location}');
+        }
         final facilitiesToShow = trailData.facilities
             .where((f) => f.type != '기타')
             .toList();
+        debugPrint('=== 필터 후: ${facilitiesToShow.length}개 ===');
 
         setState(() {
           _trailPolylines = polylines;
@@ -241,6 +246,9 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       // 선택 상태에 따라 마커 ID 변경하여 강제 업데이트
       final markerIdSuffix = isSelected ? '_selected' : '';
 
+      final label = facility.description.isNotEmpty
+          ? '${facility.type} - ${facility.description}'
+          : facility.type;
       markers.add(
         Marker(
           markerId: 'facility_$i$markerIdSuffix',
@@ -248,6 +256,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
           width: size,
           height: size + 10,
           markerImageSrc: _getFacilityMarkerImage(facility.type, isSelected),
+          infoWindowContent: label,
         ),
       );
     }

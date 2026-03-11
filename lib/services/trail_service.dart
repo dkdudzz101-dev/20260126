@@ -1,5 +1,6 @@
 import 'dart:convert' show json, utf8;
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'package:proj4dart/proj4dart.dart';
@@ -66,14 +67,15 @@ class TrailService {
           .from('oreum-data')
           .getPublicUrl('$oreumId/map.geojson');
 
-      final response = await http.get(Uri.parse(url));
+      final cacheBuster = DateTime.now().millisecondsSinceEpoch;
+      final response = await http.get(Uri.parse('$url?v=$cacheBuster'));
 
       if (response.statusCode == 200) {
         final geojson = json.decode(utf8.decode(response.bodyBytes));
         return parseGeoJsonWithFacilities(geojson);
       }
     } catch (e) {
-      print('Error loading trail data from Supabase: $e');
+      debugPrint('Error loading trail data from Supabase: $e');
     }
     return null;
   }
@@ -150,7 +152,7 @@ class TrailService {
                   facilityType = '화장실';
                 } else if (facilityType.contains('정상') || facilityType.contains('summit')) {
                   facilityType = '정상';
-                } else if (facilityType.contains('시종점') || facilityType.contains('입구') || facilityType.contains('start') || facilityType.contains('end')) {
+                } else if (facilityType.contains('시종점') || facilityType.contains('입구') || facilityType.contains('출발') || facilityType.contains('start') || facilityType.contains('end')) {
                   facilityType = '시종점';
                 } else if (facilityType.contains('쉼터') || facilityType.contains('휴게') || facilityType.contains('rest')) {
                   facilityType = '쉼터';
