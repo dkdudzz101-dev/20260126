@@ -1,0 +1,166 @@
+PODS:
+  - app_links (6.4.1):
+    - Flutter
+  - camera_avfoundation (0.0.1):
+    - Flutter
+  - connectivity_plus (0.0.1):
+    - Flutter
+  - Flutter (1.0.0)
+  - flutter_background_service_ios (0.0.3):
+    - Flutter
+  - flutter_compass (0.0.1):
+    - Flutter
+  - flutter_local_notifications (0.0.1):
+    - Flutter
+  - flutter_naver_login (0.0.1):
+    - Flutter
+    - NidThirdPartyLogin (~> 5.0.0)
+  - flutter_secure_storage (6.0.0):
+    - Flutter
+  - geolocator_apple (1.2.0):
+    - Flutter
+    - FlutterMacOS
+  - image_picker_ios (0.0.1):
+    - Flutter
+  - kakao_flutter_sdk_common (1.9.7-3):
+    - Flutter
+  - kakao_map_plugin (0.0.1):
+    - Flutter
+  - NidThirdPartyLogin (5.0.1)
+  - package_info_plus (0.4.5):
+    - Flutter
+  - path_provider_foundation (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - pedometer (0.0.1):
+    - Flutter
+  - permission_handler_apple (9.3.0):
+    - Flutter
+  - sensors_plus (0.0.1):
+    - Flutter
+  - share_plus (0.0.1):
+    - Flutter
+  - shared_preferences_foundation (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - sign_in_with_apple (0.0.1):
+    - Flutter
+  - sqflite_darwin (0.0.4):
+    - Flutter
+    - FlutterMacOS
+  - url_launcher_ios (0.0.1):
+    - Flutter
+  - webview_flutter_wkwebview (0.0.1):
+    - Flutter
+    - FlutterMacOS
+
+DEPENDENCIES:
+  - app_links (from `.symlinks/plugins/app_links/ios`)
+  - camera_avfoundation (from `.symlinks/plugins/camera_avfoundation/ios`)
+  - connectivity_plus (from `.symlinks/plugins/connectivity_plus/ios`)
+  - Flutter (from `Flutter`)
+  - flutter_background_service_ios (from `.symlinks/plugins/flutter_background_service_ios/ios`)
+  - flutter_compass (from `.symlinks/plugins/flutter_compass/ios`)
+  - flutter_local_notifications (from `.symlinks/plugins/flutter_local_notifications/ios`)
+  - flutter_naver_login (from `.symlinks/plugins/flutter_naver_login/ios`)
+  - flutter_secure_storage (from `.symlinks/plugins/flutter_secure_storage/ios`)
+  - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
+  - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
+  - kakao_flutter_sdk_common (from `.symlinks/plugins/kakao_flutter_sdk_common/ios`)
+  - kakao_map_plugin (from `.symlinks/plugins/kakao_map_plugin/ios`)
+  - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
+  - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
+  - pedometer (from `.symlinks/plugins/pedometer/ios`)
+  - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
+  - sensors_plus (from `.symlinks/plugins/sensors_plus/ios`)
+  - share_plus (from `.symlinks/plugins/share_plus/ios`)
+  - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
+  - sign_in_with_apple (from `.symlinks/plugins/sign_in_with_apple/ios`)
+  - sqflite_darwin (from `.symlinks/plugins/sqflite_darwin/darwin`)
+  - url_launcher_ios (from `.symlinks/plugins/url_launcher_ios/ios`)
+  - webview_flutter_wkwebview (from `.symlinks/plugins/webview_flutter_wkwebview/darwin`)
+
+SPEC REPOS:
+  trunk:
+    - NidThirdPartyLogin
+
+EXTERNAL SOURCES:
+  app_links:
+    :path: ".symlinks/plugins/app_links/ios"
+  camera_avfoundation:
+    :path: ".symlinks/plugins/camera_avfoundation/ios"
+  connectivity_plus:
+    :path: ".symlinks/plugins/connectivity_plus/ios"
+  Flutter:
+    :path: Flutter
+  flutter_background_service_ios:
+    :path: ".symlinks/plugins/flutter_background_service_ios/ios"
+  flutter_compass:
+    :path: ".symlinks/plugins/flutter_compass/ios"
+  flutter_local_notifications:
+    :path: ".symlinks/plugins/flutter_local_notifications/ios"
+  flutter_naver_login:
+    :path: ".symlinks/plugins/flutter_naver_login/ios"
+  flutter_secure_storage:
+    :path: ".symlinks/plugins/flutter_secure_storage/ios"
+  geolocator_apple:
+    :path: ".symlinks/plugins/geolocator_apple/darwin"
+  image_picker_ios:
+    :path: ".symlinks/plugins/image_picker_ios/ios"
+  kakao_flutter_sdk_common:
+    :path: ".symlinks/plugins/kakao_flutter_sdk_common/ios"
+  kakao_map_plugin:
+    :path: ".symlinks/plugins/kakao_map_plugin/ios"
+  package_info_plus:
+    :path: ".symlinks/plugins/package_info_plus/ios"
+  path_provider_foundation:
+    :path: ".symlinks/plugins/path_provider_foundation/darwin"
+  pedometer:
+    :path: ".symlinks/plugins/pedometer/ios"
+  permission_handler_apple:
+    :path: ".symlinks/plugins/permission_handler_apple/ios"
+  sensors_plus:
+    :path: ".symlinks/plugins/sensors_plus/ios"
+  share_plus:
+    :path: ".symlinks/plugins/share_plus/ios"
+  shared_preferences_foundation:
+    :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
+  sign_in_with_apple:
+    :path: ".symlinks/plugins/sign_in_with_apple/ios"
+  sqflite_darwin:
+    :path: ".symlinks/plugins/sqflite_darwin/darwin"
+  url_launcher_ios:
+    :path: ".symlinks/plugins/url_launcher_ios/ios"
+  webview_flutter_wkwebview:
+    :path: ".symlinks/plugins/webview_flutter_wkwebview/darwin"
+
+SPEC CHECKSUMS:
+  app_links: 3dbc685f76b1693c66a6d9dd1e9ab6f73d97dc0a
+  camera_avfoundation: 5675ca25298b6f81fa0a325188e7df62cc217741
+  connectivity_plus: cb623214f4e1f6ef8fe7403d580fdad517d2f7dd
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_background_service_ios: 00d31bdff7b4bfe06d32375df358abe0329cf87e
+  flutter_compass: b236ab69b61545cce89fd58527f401a7587d5cc1
+  flutter_local_notifications: ad39620c743ea4c15127860f4b5641649a988100
+  flutter_naver_login: 965ca284c1a64f0185dfaf9dfd1b8f69f34e6c11
+  flutter_secure_storage: 1ed9476fba7e7a782b22888f956cce43e2c62f13
+  geolocator_apple: ab36aa0e8b7d7a2d7639b3b4e48308394e8cef5e
+  image_picker_ios: 7fe1ff8e34c1790d6fff70a32484959f563a928a
+  kakao_flutter_sdk_common: 600d55b532da0bd37268a529e1add49302477710
+  kakao_map_plugin: 4d54a08bb9f59383c361f6f2d5526b5359ccb728
+  NidThirdPartyLogin: ed291a543cc60a433bcad522b6bf7d3126ad4fdc
+  package_info_plus: af8e2ca6888548050f16fa2f1938db7b5a5df499
+  path_provider_foundation: 080d55be775b7414fd5a5ef3ac137b97b097e564
+  pedometer: 1c5eaab0c6bce8eb7651f7095553b5081c9d06ed
+  permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
+  sensors_plus: 6a11ed0c2e1d0bd0b20b4029d3bad27d96e0c65b
+  share_plus: de6030e33b4e106470e09322d87cf2a4258d2d1d
+  shared_preferences_foundation: 9e1978ff2562383bd5676f64ec4e9aa8fa06a6f7
+  sign_in_with_apple: c5dcc141574c8c54d5ac99dd2163c0c72ad22418
+  sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
+  url_launcher_ios: 694010445543906933d732453a59da0a173ae33d
+  webview_flutter_wkwebview: 1821ceac936eba6f7984d89a9f3bcb4dea99ebb2
+
+PODFILE CHECKSUM: 2177a41b70e1d699d00fca8c5029e0ea0c4a5528
+
+COCOAPODS: 1.16.2

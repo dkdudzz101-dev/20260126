@@ -246,7 +246,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       // 선택 상태에 따라 마커 ID 변경하여 강제 업데이트
       final markerIdSuffix = isSelected ? '_selected' : '';
 
-      final label = facility.description.isNotEmpty
+      final label = (facility.description ?? '').isNotEmpty
           ? '${facility.type} - ${facility.description}'
           : facility.type;
       markers.add(
@@ -462,12 +462,16 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
 
   /// 권한이 이미 있을 때만 위치 로드 (initState용, 권한 요청 안 함)
   Future<void> _initializeLocation() async {
+    // 이미 권한이 있을 때만 위치 가져오기 (권한 요청은 등반 시작 시)
     final position = await _mapService.getCurrentPosition();
     if (position != null && mounted) {
       setState(() {
         _currentPosition = position;
       });
       _updateMarkers();
+      _mapController?.setCenter(
+        LatLng(position.latitude, position.longitude),
+      );
     }
   }
 
@@ -644,6 +648,18 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     }
 
     if (!mounted) return;
+
+    // 권한 획득 후 현재 위치 갱신
+    final position = await _mapService.getCurrentPosition();
+    if (position != null && mounted) {
+      setState(() {
+        _currentPosition = position;
+      });
+      _updateMarkers();
+      _mapController?.setCenter(
+        LatLng(position.latitude, position.longitude),
+      );
+    }
 
     // 시작 걸음수 기록
     final pedometer = context.read<PedometerService>();

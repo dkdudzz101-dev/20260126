@@ -89,5 +89,12 @@
 	<!-- 카카오 API 키 -->
 	<key>KAKAO_NATIVE_APP_KEY</key>
 	<string>d4b730c14857dce93c9ba94e30f56260</string>
+
+	<!-- 카카오맵 WebView 네트워크 허용 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

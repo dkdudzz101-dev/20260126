@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/auth_provider.dart';
 import '../main_tab_screen.dart';
+import '../menu/terms_screen.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -62,7 +64,31 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// 소셜 로그인 전 이용약관 동의 확인. 이미 동의했으면 true 반환.
+  Future<bool> _checkTermsAgreement() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('social_terms_agreed') == true) return true;
+
+    if (!mounted) return false;
+    final agreed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => const _TermsAgreementSheet(),
+    );
+
+    if (agreed == true) {
+      await prefs.setBool('social_terms_agreed', true);
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _handleKakaoLogin() async {
+    if (!await _checkTermsAgreement()) return;
     setState(() => _isLoading = true);
     try {
       final authProvider = context.read<AuthProvider>();
@@ -86,6 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _handleAppleLogin() async {
+    if (!await _checkTermsAgreement()) return;
     setState(() => _isLoading = true);
     try {
       final authProvider = context.read<AuthProvider>();
@@ -348,6 +375,169 @@ class _LoginScreenState extends State<LoginScreen> {
               style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 소셜 로그인 시 이용약관 동의 바텀시트
+class _TermsAgreementSheet extends StatefulWidget {
+  const _TermsAgreementSheet();
+
+  @override
+  State<_TermsAgreementSheet> createState() => _TermsAgreementSheetState();
+}
+
+class _TermsAgreementSheetState extends State<_TermsAgreementSheet> {
+  bool _agreeTerms = false;
+  bool _agreePrivacy = false;
+
+  bool get _allAgreed => _agreeTerms && _agreePrivacy;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              '약관 동의',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '서비스 이용을 위해 약관에 동의해주세요.',
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 20),
+            // 전체 동의
+            GestureDetector(
+              onTap: () {
+                final newVal = !_allAgreed;
+                setState(() {
+                  _agreeTerms = newVal;
+                  _agreePrivacy = newVal;
+                });
+              },
+              child: Row(
+                children: [
+                  Icon(
+                    _allAgreed ? Icons.check_circle : Icons.check_circle_outline,
+                    color: _allAgreed ? AppColors.primary : Colors.grey,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 10),
+                  const Text(
+                    '전체 동의',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 24),
+            // 이용약관 동의
+            Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: Checkbox(
+                    value: _agreeTerms,
+                    activeColor: AppColors.primary,
+                    onChanged: (v) => setState(() => _agreeTerms = v ?? false),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('[필수] 서비스 이용약관 동의', style: TextStyle(fontSize: 14)),
+                ),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const TermsScreen()),
+                  ),
+                  child: const Text(
+                    '보기',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.primary,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // 개인정보처리방침 동의
+            Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: Checkbox(
+                    value: _agreePrivacy,
+                    activeColor: AppColors.primary,
+                    onChanged: (v) => setState(() => _agreePrivacy = v ?? false),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('[필수] 개인정보처리방침 동의', style: TextStyle(fontSize: 14)),
+                ),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const TermsScreen()),
+                  ),
+                  child: const Text(
+                    '보기',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.primary,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            // 동의 버튼
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                onPressed: _allAgreed ? () => Navigator.pop(context, true) : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.grey.shade300,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text(
+                  '동의하고 계속',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
               ),
             ),
           ],
