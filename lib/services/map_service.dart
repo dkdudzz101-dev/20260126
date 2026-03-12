@@ -28,7 +28,32 @@ class MapService {
     var status = await Permission.locationWhenInUse.status;
 
     if (status.isGranted) return true;
-    if (status.isPermanentlyDenied) return false;
+
+    // 영구 거부: 설정으로 이동 안내
+    if (status.isPermanentlyDenied) {
+      if (!context.mounted) return false;
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('위치 권한 필요'),
+          content: const Text('위치 권한이 거부되어 있습니다.\n설정에서 위치 권한을 허용해주세요.\n\n설정 > 제주오름 > 위치 > 앱을 사용하는 동안'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('취소'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                openAppSettings();
+              },
+              child: const Text('설정으로 이동'),
+            ),
+          ],
+        ),
+      );
+      return false;
+    }
 
     // 전체화면 공개를 보여준 적이 있는지 확인
     final disclosureShown = await LocationPermissionScreen.wasDisclosureShown();
@@ -47,6 +72,32 @@ class MapService {
 
     // 이미 설명을 본 적 있으면 OS 권한 다이얼로그 직접 호출
     final result = await Permission.locationWhenInUse.request();
+    // 요청 후에도 거부된 경우 설정으로 이동 안내
+    if (!result.isGranted) {
+      final newStatus = await Permission.locationWhenInUse.status;
+      if (newStatus.isPermanentlyDenied && context.mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('위치 권한 필요'),
+            content: const Text('위치 권한이 거부되어 있습니다.\n설정에서 위치 권한을 허용해주세요.\n\n설정 > 제주오름 > 위치 > 앱을 사용하는 동안'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('취소'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  openAppSettings();
+                },
+                child: const Text('설정으로 이동'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
     return result.isGranted;
   }
 

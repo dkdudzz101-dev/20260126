@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:geolocator/geolocator.dart';
 
 /// Google Play 위치 권한 정책 준수를 위한 전체화면 위치 권한 설명 화면.
 /// 첫 위치 권한 요청 전 반드시 이 화면을 표시해야 합니다 (prominent disclosure).
@@ -180,8 +181,82 @@ class LocationPermissionScreen extends StatelessWidget {
     // 공개 표시 완료 기록
     await markDisclosureShown();
 
+    // 현재 권한 상태 확인
+    final currentStatus = await Permission.locationWhenInUse.status;
+
+    // 이미 영구 거부 상태면 바로 설정으로 안내
+    if (currentStatus.isPermanentlyDenied) {
+      if (context.mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('위치 권한 필요'),
+            content: const Text(
+              '위치 권한이 거부되어 있습니다.\n'
+              '아래 버튼을 눌러 설정에서\n'
+              '"위치 → 앱을 사용하는 동안"을\n'
+              '선택해주세요.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('취소'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  openAppSettings();
+                },
+                child: const Text(
+                  '설정으로 이동',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        );
+        if (context.mounted) Navigator.pop(context, false);
+      }
+      return;
+    }
+
     // OS 위치 권한 요청
     final status = await Permission.locationWhenInUse.request();
+
+    // 요청 후 영구 거부된 경우 설정으로 안내
+    if (!status.isGranted && context.mounted) {
+      final newStatus = await Permission.locationWhenInUse.status;
+      if (newStatus.isPermanentlyDenied && context.mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('위치 권한 필요'),
+            content: const Text(
+              '위치 권한이 거부되었습니다.\n'
+              '아래 버튼을 눌러 설정에서\n'
+              '"위치 → 앱을 사용하는 동안"을\n'
+              '선택해주세요.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('취소'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  openAppSettings();
+                },
+                child: const Text(
+                  '설정으로 이동',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    }
 
     if (context.mounted) {
       Navigator.pop(context, status.isGranted);
