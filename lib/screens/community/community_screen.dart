@@ -1702,7 +1702,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   const Spacer(),
                   if (!isMyComment)
                     GestureDetector(
-                      onTap: () => _showReportDialog(comment.id, 'comment'),
+                      onTap: () => _showReportDialog(context, 'comment', comment.id),
                       child: Icon(Icons.flag_outlined, size: 16, color: Colors.grey.shade400),
                     ),
                 ],
@@ -1941,7 +1941,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
-<<<<<<< HEAD
   void _showReportDialog(BuildContext ctx, String targetType, String targetId) {
     String? selectedReason;
     final reasons = ReportService.reportReasons;

@@ -15,6 +15,7 @@ import '../../services/blog_service.dart';
 import '../../services/map_service.dart';
 import '../../services/oreum_service.dart';
 import '../../services/stamp_service.dart';
+import '../../services/review_service.dart';
 import '../hiking/hiking_screen.dart';
 import '../map/map_screen.dart';
 import 'oreum_error_report_screen.dart';
@@ -48,6 +49,9 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   bool _isUploadingImage = false;
   List<Map<String, dynamic>> _stampUsers = [];
   bool _isLoadingStampUsers = true;
+  final ReviewService _reviewService = ReviewService();
+  List<Map<String, dynamic>> _reviews = [];
+  double _averageRating = 0.0;
 
   @override
   void initState() {
@@ -56,6 +60,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     _loadBlogPosts();
     _loadGalleryImages();
     _loadStampUsers();
+    _loadReviews();
   }
 
   Future<void> _loadGalleryImages() async {
@@ -96,6 +101,19 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
         setState(() => _isLoadingStampUsers = false);
       }
     }
+  }
+
+  Future<void> _loadReviews() async {
+    try {
+      final reviews = await _reviewService.getReviewsByOreum(oreum.id);
+      final avgRating = await _reviewService.getAverageRating(oreum.id);
+      if (mounted) {
+        setState(() {
+          _reviews = reviews;
+          _averageRating = avgRating;
+        });
+      }
+    } catch (_) {}
   }
 
   List<String> get _allGalleryImages => [..._communityImages, ..._officialImages];  // 최신(커뮤니티) 먼저
