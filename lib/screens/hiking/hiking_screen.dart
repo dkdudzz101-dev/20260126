@@ -127,7 +127,6 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     _loadTrail(); // 등산로 로드
     _restoreHikingState(); // 저장된 등산 상태 복원
     if (widget.autoStart) {
-      _isStarting = true; // 첫 프레임부터 "등반 시작" 버튼 숨김
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _startHiking();
       });
@@ -618,7 +617,10 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     if (_isStarting || _isHiking) return;
 
     // 로그인 체크
-    if (!LoginGuard.check(context, message: '등산을 시작하려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
+    if (!LoginGuard.check(context, message: '등산을 시작하려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) {
+      if (mounted) setState(() => _isStarting = false);
+      return;
+    }
 
     setState(() => _isStarting = true);
 
