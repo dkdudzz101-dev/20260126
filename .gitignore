@@ -5,9 +5,11 @@
 *.swp
 .DS_Store
 .atom/
+.build/
 .buildlog/
 .history
 .svn/
+.swiftpm/
 migrate_working_dir/
 
 # IntelliJ related
@@ -48,3 +50,6 @@ android/key.properties
 *.keystore
 android/nul
 *.hprof
+
+# 환경변수 (API 키 포함 - 절대 커밋 금지)
+.env.json

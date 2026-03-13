@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:pedometer/pedometer.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../config/supabase_config.dart';
 
 @pragma('vm:entry-point')
 class BackgroundLocationService {
@@ -15,7 +18,11 @@ class BackgroundLocationService {
   static Future<void> initialize() async {
     // 알림 초기화
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
+    const iosSettings = DarwinInitializationSettings();
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
     await _notifications.initialize(initSettings);
 
     // 백그라운드 서비스 설정
@@ -26,7 +33,7 @@ class BackgroundLocationService {
         isForegroundMode: true,
         notificationChannelId: 'jeju_oreum_location',
         initialNotificationTitle: '제주오름',
-        initialNotificationContent: '오름 근처 자동 인증 활성화',
+        initialNotificationContent: '등산 중 - 위치 및 걸음수 추적 활성화',
         foregroundServiceNotificationId: 888,
       ),
       iosConfiguration: IosConfiguration(
@@ -40,6 +47,18 @@ class BackgroundLocationService {
   // iOS 백그라운드 핸들러
   @pragma('vm:entry-point')
   static Future<bool> onIosBackground(ServiceInstance service) async {
+    DartPluginRegistrant.ensureInitialized();
+
+    // iOS 백그라운드에서도 위치 체크 수행
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      debugPrint('iOS 백그라운드 위치: ${position.latitude}, ${position.longitude}');
+    } catch (e) {
+      debugPrint('iOS 백그라운드 위치 체크 실패: $e');
+    }
+
     return true;
   }
 
@@ -50,15 +69,57 @@ class BackgroundLocationService {
 
     // Supabase 초기화
     await Supabase.initialize(
-      url: 'https://zsodcfgchbmmvpbwhuyu.supabase.co',
-      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpzb2RjZmdjaGJtbXZwYndodXl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjU2MTQsImV4cCI6MjA4MzI0MTYxNH0.XkQHyzl0I-kJ3yZYniry-DXfKTDZ5H_b5qV-uNvmXe8',
+      url: SupabaseConfig.supabaseUrl,
+      anonKey: SupabaseConfig.supabaseAnonKey,
     );
 
     final client = Supabase.instance.client;
 
-    // 오름 정상 좌표 캐시
+    // === 걸음수 추적 ===
+    int bgBaseSteps = 0;
+    bool bgBaseStepsSet = false;
+
+    // SharedPreferences에서 기존 걸음수 데이터 로드
+    final prefs = await SharedPreferences.getInstance();
+    final savedBgSteps = prefs.getInt('bg_pedometer_steps') ?? 0;
+
+    // 걸음수 스트림 리스닝
+    StreamSubscription<StepCount>? stepSubscription;
+    try {
+      stepSubscription = Pedometer.stepCountStream.listen(
+        (StepCount event) async {
+          if (!bgBaseStepsSet) {
+            // 첫 이벤트: 기준점 설정
+            bgBaseSteps = event.steps - savedBgSteps;
+            bgBaseStepsSet = true;
+          }
+
+          final currentSteps = event.steps - bgBaseSteps;
+          if (currentSteps < 0) return;
+
+          // SharedPreferences에 저장 (포그라운드 PedometerService와 동기화)
+          final p = await SharedPreferences.getInstance();
+          await p.setInt('bg_pedometer_steps', currentSteps);
+
+          // PedometerService의 today_steps도 업데이트
+          final existingTodaySteps = p.getInt('pedometer_today_steps') ?? 0;
+          if (currentSteps > existingTodaySteps) {
+            await p.setInt('pedometer_today_steps', currentSteps);
+          }
+
+          debugPrint('백그라운드 걸음수: $currentSteps');
+        },
+        onError: (error) {
+          debugPrint('백그라운드 걸음수 에러: $error');
+        },
+      );
+    } catch (e) {
+      debugPrint('백그라운드 걸음수 스트림 시작 실패: $e');
+    }
+
+    // === 위치 추적 (자동 스탬프) ===
     List<Map<String, dynamic>> oreumSummits = [];
-    Set<String> stampedOreums = {}; // 이미 인증된 오름 (중복 방지)
+    Set<String> stampedOreums = {};
 
     // 오름 데이터 로드
     Future<void> loadOreums() async {
@@ -177,6 +238,7 @@ class BackgroundLocationService {
 
     // 서비스 종료 핸들러
     service.on('stopService').listen((event) {
+      stepSubscription?.cancel();
       service.stopSelf();
     });
   }

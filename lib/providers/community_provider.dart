@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/post_model.dart';
 import '../services/community_service.dart';
 import '../services/block_service.dart';
+import '../services/notification_service.dart';
 
 class CommunityProvider extends ChangeNotifier {
   final CommunityService _communityService = CommunityService();
   final BlockService _blockService = BlockService();
+  final NotificationService _notificationService = NotificationService();
 
   List<PostModel> _posts = [];
   List<CommentModel> _comments = [];
@@ -149,6 +152,18 @@ class CommunityProvider extends ChangeNotifier {
       if (isNowLiked) {
         _likedPosts.add(postId);
         _posts[index] = post.copyWith(likeCount: post.likeCount + 1);
+
+        // 게시글 작성자에게 좋아요 알림 (본인 제외)
+        final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+        if (post.userId.isNotEmpty && post.userId != currentUserId) {
+          _notificationService.createNotification(
+            userId: post.userId,
+            type: 'like',
+            title: '좋아요',
+            message: '회원님의 게시글에 좋아요를 눌렀습니다.',
+            data: {'post_id': postId},
+          );
+        }
       } else {
         _likedPosts.remove(postId);
         _posts[index] = post.copyWith(likeCount: post.likeCount - 1);
@@ -156,7 +171,6 @@ class CommunityProvider extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('좋아요 토글 오류: $e');
-      // 로그인 필요 등의 오류는 UI에서 처리
     }
   }
 
@@ -235,6 +249,19 @@ class CommunityProvider extends ChangeNotifier {
         final post = _posts[index];
         _posts[index] = post.copyWith(commentCount: post.commentCount + 1);
         notifyListeners();
+
+        // 게시글 작성자에게 댓글 알림 (본인 제외)
+        final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+        if (post.userId.isNotEmpty && post.userId != currentUserId) {
+          final preview = content.length > 30 ? '${content.substring(0, 30)}...' : content;
+          _notificationService.createNotification(
+            userId: post.userId!,
+            type: 'comment',
+            title: '새 댓글',
+            message: preview,
+            data: {'post_id': postId},
+          );
+        }
       }
 
       return true;

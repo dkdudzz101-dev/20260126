@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import '../config/supabase_config.dart';
 import '../models/oreum_model.dart';
 import '../services/stamp_service.dart';
 
@@ -31,7 +32,7 @@ class StampModel {
   final int? descentSteps;
   final int? descentCalories;
 
-  static const String _storageBaseUrl = 'https://zsodcfgchbmmvpbwhuyu.supabase.co/storage/v1/object/public/oreum-data/';
+  static String get _storageBaseUrl => '${SupabaseConfig.storageUrl}/oreum-data/';
 
   StampModel({
     required this.id,

@@ -1,5 +1,7 @@
+import '../config/supabase_config.dart';
+
 class OreumModel {
-  static const String _storageBaseUrl = 'https://zsodcfgchbmmvpbwhuyu.supabase.co/storage/v1/object/public/oreum-data/';
+  static String get _storageBaseUrl => '${SupabaseConfig.storageUrl}/oreum-data/';
 
   final String id;
   final String name;

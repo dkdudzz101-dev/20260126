@@ -1,9 +1,9 @@
 import 'package:kakao_flutter_sdk/kakao_flutter_sdk.dart';
+import 'env_config.dart';
 
 class KakaoConfig {
-  // 카카오 개발자 콘솔에서 발급받은 앱 키
-  static const String nativeAppKey = 'd4b730c14857dce93c9ba94e30f56260';
-  static const String javaScriptAppKey = '1c8adf25a7ec61b19a19936513618f6a';
+  static const String nativeAppKey = EnvConfig.kakaoNativeAppKey;
+  static const String javaScriptAppKey = EnvConfig.kakaoJsAppKey;
 
   // 카카오 SDK 초기화
   static void initialize() {

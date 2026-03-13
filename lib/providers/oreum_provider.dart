@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/oreum_model.dart';
 import '../services/oreum_service.dart';
 import '../services/bookmark_service.dart';
+import '../services/offline_service.dart';
 
 class OreumProvider extends ChangeNotifier {
   final OreumService _oreumService = OreumService();
@@ -47,6 +48,20 @@ class OreumProvider extends ChangeNotifier {
       _allOreumsForStamp.sort((a, b) => a.name.compareTo(b.name));
     } catch (e) {
       _error = e.toString();
+
+      // 네트워크 실패 시 오프라인 데이터 폴백
+      if (_allOreums.isEmpty) {
+        try {
+          final offlineService = OfflineService();
+          final offlineData = await offlineService.getOfflineOreums();
+          if (offlineData.isNotEmpty) {
+            _allOreums = offlineData.map((d) => OreumModel.fromJson(d)).toList();
+            _allOreums.sort((a, b) => a.name.compareTo(b.name));
+            _oreums = _allOreums;
+            _error = null; // 오프라인 데이터로 복구 성공
+          }
+        } catch (_) {}
+      }
     } finally {
       _isLoading = false;
       notifyListeners();

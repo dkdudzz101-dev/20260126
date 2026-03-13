@@ -2028,6 +2028,15 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                       ),
                     ),
                   ),
+                  if (_reviews.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Icon(Icons.star, size: 16, color: Colors.amber),
+                    const SizedBox(width: 2),
+                    Text(
+                      _averageRating.toStringAsFixed(1),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ],
                 ],
               ),
               TextButton.icon(
@@ -2251,6 +2260,127 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Text('등록하기'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showEditReviewDialog(Map<String, dynamic> review) {
+    final contentController = TextEditingController(text: review['content'] ?? '');
+    int selectedRating = review['rating'] as int? ?? 5;
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(dialogContext).viewInsets.bottom + 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        '리뷰 수정',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(dialogContext),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('별점', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: List.generate(5, (index) {
+                      return GestureDetector(
+                        onTap: () => setModalState(() => selectedRating = index + 1),
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Icon(
+                            index < selectedRating ? Icons.star : Icons.star_border,
+                            size: 32,
+                            color: Colors.amber,
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: contentController,
+                    maxLines: 4,
+                    maxLength: 200,
+                    decoration: const InputDecoration(
+                      hintText: '방문 후기를 남겨주세요...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: isSubmitting
+                          ? null
+                          : () async {
+                              setModalState(() => isSubmitting = true);
+                              try {
+                                await _reviewService.updateReview(
+                                  reviewId: review['id'].toString(),
+                                  rating: selectedRating,
+                                  content: contentController.text.trim().isNotEmpty
+                                      ? contentController.text.trim()
+                                      : null,
+                                );
+                                if (dialogContext.mounted) {
+                                  Navigator.pop(dialogContext);
+                                }
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('리뷰가 수정되었습니다')),
+                                  );
+                                  _loadReviews();
+                                }
+                              } catch (e) {
+                                setModalState(() => isSubmitting = false);
+                                if (dialogContext.mounted) {
+                                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                    SnackBar(content: Text('오류: $e')),
+                                  );
+                                }
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: isSubmitting
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('수정하기'),
                     ),
                   ),
                 ],

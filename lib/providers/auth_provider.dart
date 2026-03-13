@@ -11,6 +11,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
+import '../config/kakao_config.dart';
 
 class UserInfo {
   final String id;
@@ -315,8 +316,8 @@ class AuthProvider extends ChangeNotifier {
   // 카카오 authorization code로 토큰 교환
   Future<bool> _exchangeKakaoToken(String code) async {
     try {
-      const clientId = 'd4b730c14857dce93c9ba94e30f56260';
-      const redirectUri = 'kakaod4b730c14857dce93c9ba94e30f56260://oauth';
+      final clientId = KakaoConfig.nativeAppKey;
+      final redirectUri = 'kakao${KakaoConfig.nativeAppKey}://oauth';
 
       final response = await http.post(
         Uri.parse('https://kauth.kakao.com/oauth/token'),

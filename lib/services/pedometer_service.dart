@@ -109,6 +109,19 @@ class PedometerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // 백그라운드 서비스에서 저장한 걸음수 동기화
+  Future<void> syncFromBackground() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bgSteps = prefs.getInt('bg_pedometer_steps') ?? 0;
+
+    if (bgSteps > _todaySteps) {
+      _todaySteps = bgSteps;
+      _todayDistance = _calculateDistance(_todaySteps);
+      await _saveData();
+      notifyListeners();
+    }
+  }
+
   void _onStepCountError(error) {
     debugPrint('걸음수 에러: $error');
   }

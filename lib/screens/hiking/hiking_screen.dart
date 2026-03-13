@@ -6,6 +6,7 @@ import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../theme/app_colors.dart';
 import '../../models/oreum_model.dart';
 import '../../services/map_service.dart';
@@ -955,6 +956,13 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
         builder: (_) => const Center(child: CircularProgressIndicator()),
       );
     }
+
+    // 백그라운드에서 측정된 걸음수 동기화
+    final pedometer = context.read<PedometerService>();
+    await pedometer.syncFromBackground();
+    final currentSteps = pedometer.todaySteps;
+    _hikingSteps = currentSteps - _startSteps;
+    if (_hikingSteps < 0) _hikingSteps = 0;
 
     // 백그라운드 위치 서비스 종료
     await BackgroundLocationService.stopService();
@@ -2707,6 +2715,22 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
 
   // 사진 촬영
   Future<void> _takePhoto() async {
+    final status = await Permission.camera.request();
+    if (!status.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('카메라 권한이 필요합니다. 설정에서 권한을 허용해주세요.'),
+            action: SnackBarAction(
+              label: '설정',
+              onPressed: () => openAppSettings(),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     try {
       final XFile? photo = await _imagePicker.pickImage(
         source: ImageSource.camera,

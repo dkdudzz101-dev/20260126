@@ -1699,6 +1699,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     comment.timeAgo,
                     style: const TextStyle(fontSize: 11, color: AppColors.textHint),
                   ),
+                  const Spacer(),
+                  if (!isMyComment)
+                    GestureDetector(
+                      onTap: () => _showReportDialog(comment.id, 'comment'),
+                      child: Icon(Icons.flag_outlined, size: 16, color: Colors.grey.shade400),
+                    ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -1935,6 +1941,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     );
   }
 
+<<<<<<< HEAD
   void _showReportDialog(BuildContext ctx, String targetType, String targetId) {
     String? selectedReason;
     final reasons = ReportService.reportReasons;
