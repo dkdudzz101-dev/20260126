@@ -116,7 +116,7 @@ class BackgroundLocationPermissionScreen extends StatelessWidget {
                     elevation: 0,
                   ),
                   child: const Text(
-                    '동의하고 계속',
+                    '계속',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -241,7 +241,7 @@ class BackgroundLocationPermissionScreen extends StatelessWidget {
               Navigator.pop(ctx);
               Navigator.pop(context, false); // 설정 거부 → 그냥 시작
             },
-            child: Text('나중에', style: TextStyle(color: Colors.grey[600])),
+            child: Text('취소', style: TextStyle(color: Colors.grey[600])),
           ),
           ElevatedButton(
             onPressed: () async {
