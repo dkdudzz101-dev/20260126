@@ -52,6 +52,9 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   bool _isUploadingImage = false;
   List<Map<String, dynamic>> _stampUsers = [];
   bool _isLoadingStampUsers = true;
+  final ReviewService _reviewService = ReviewService();
+  List<Map<String, dynamic>> _reviews = [];
+  double _averageRating = 0.0;
 
   @override
   void initState() {

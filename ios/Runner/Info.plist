@@ -61,6 +61,8 @@
 	<string>AR 오름 표시 및 프로필 사진, 커뮤니티 게시글 사진 촬영을 위해 카메라 권한이 필요합니다.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>프로필 사진 및 커뮤니티 게시글에 사진을 첨부하기 위해 사진 라이브러리 접근 권한이 필요합니다.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>등산 사진을 저장하기 위해 사진 라이브러리 저장 권한이 필요합니다.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
@@ -89,5 +91,12 @@
 	<!-- 카카오 API 키 -->
 	<key>KAKAO_NATIVE_APP_KEY</key>
 	<string>d4b730c14857dce93c9ba94e30f56260</string>
+
+	<!-- 카카오맵 WebView 네트워크 허용 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

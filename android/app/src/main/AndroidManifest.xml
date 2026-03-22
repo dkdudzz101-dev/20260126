@@ -27,7 +27,7 @@
         android:label="제주오름"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false">
 
         <!-- 카카오 API 키 -->
         <meta-data
