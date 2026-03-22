@@ -12,7 +12,6 @@ import '../../services/community_service.dart';
 import '../../services/block_service.dart';
 import '../../services/report_service.dart';
 import '../../utils/content_filter.dart';
-import '../auth/login_screen.dart';
 import '../oreum/oreum_detail_screen.dart';
 import '../ranking/ranking_screen.dart';
 import '../../services/ranking_service.dart';
@@ -36,9 +35,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<CommunityProvider>().loadBlockedUsers();
-      context.read<CommunityProvider>().loadPosts(filter: _selectedFilter);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final provider = context.read<CommunityProvider>();
+      await provider.loadBlockedUsers(); // 차단 목록 먼저 로드 후 게시글 로드
+      if (!mounted) return;
+      provider.loadPosts(filter: _selectedFilter);
       _loadTopRankers();
     });
   }
@@ -55,7 +56,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
     final communityProvider = context.read<CommunityProvider>();
     if (filter == '내 글') {
-      final userId = context.read<AuthProvider>().user?.id ?? '';
+      final userId = context.read<AuthProvider>().user?.id;
+      if (userId == null) {
+        // 로그인 안 된 상태면 필터 되돌리고 로그인 유도
+        setState(() => _selectedFilter = '최신');
+        if (!LoginGuard.check(context, message: '내 글을 보려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
+        return;
+      }
       communityProvider.loadMyPosts(userId);
     } else {
       communityProvider.loadPosts(filter: filter);
@@ -93,6 +100,24 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
 
+                if (provider.error != null) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                        const SizedBox(height: 12),
+                        Text(provider.error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: () => provider.loadPosts(filter: _selectedFilter),
+                          child: const Text('다시 시도'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
                 if (provider.posts.isEmpty) {
                   return ListView(
                     children: [
@@ -102,21 +127,36 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   );
                 }
 
-                return RefreshIndicator(
-                  onRefresh: () async {
-                    await provider.loadPosts(filter: _selectedFilter);
-                    await _loadTopRankers();
+                return NotificationListener<ScrollNotification>(
+                  onNotification: (scrollInfo) {
+                    if (scrollInfo.metrics.pixels >= scrollInfo.metrics.maxScrollExtent - 200 &&
+                        !provider.isLoadingMore && provider.hasMore) {
+                      provider.loadMorePosts();
+                    }
+                    return false;
                   },
-                  child: ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: provider.posts.length + (_topRankers.isNotEmpty ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (_topRankers.isNotEmpty && index == 0) {
-                        return _buildRankingBanner();
-                      }
-                      final postIndex = _topRankers.isNotEmpty ? index - 1 : index;
-                      return _buildPostCard(provider.posts[postIndex]);
+                  child: RefreshIndicator(
+                    onRefresh: () async {
+                      await provider.loadPosts(filter: _selectedFilter);
+                      await _loadTopRankers();
                     },
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: provider.posts.length + (_topRankers.isNotEmpty ? 1 : 0) + (provider.hasMore ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (_topRankers.isNotEmpty && index == 0) {
+                          return _buildRankingBanner();
+                        }
+                        final postIndex = _topRankers.isNotEmpty ? index - 1 : index;
+                        if (postIndex >= provider.posts.length) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        return _buildPostCard(provider.posts[postIndex]);
+                      },
+                    ),
                   ),
                 );
               },
@@ -389,9 +429,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
                     )),
                   ],
                 ),
-                Text('전체보기 >', style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.8), fontSize: 12,
-                )),
+                GestureDetector(
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RankingScreen())),
+                  child: Text('전체보기 >', style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.8), fontSize: 12,
+                  )),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -1699,6 +1742,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     comment.timeAgo,
                     style: const TextStyle(fontSize: 11, color: AppColors.textHint),
                   ),
+                  const Spacer(),
+                  if (!isMyComment)
+                    GestureDetector(
+                      onTap: () => _showReportDialog(context, 'comment', comment.id),
+                      child: Icon(Icons.flag_outlined, size: 16, color: Colors.grey.shade400),
+                    ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -1841,6 +1890,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       userNickname: authProvider.nickname ?? '익명',
     );
 
+    if (!mounted) return;
     if (success) {
       _commentController.clear();
       setState(() {});

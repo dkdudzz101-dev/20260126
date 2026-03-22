@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/auth_provider.dart';
+import '../../services/offline_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,6 +18,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _locationEnabled = true;
   bool _darkModeEnabled = false;
   bool _autoPlayEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _notificationEnabled = prefs.getBool('notification_enabled') ?? true;
+      });
+    }
+  }
+
+  Future<void> _saveNotificationSetting(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('notification_enabled', value);
+    setState(() => _notificationEnabled = value);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: '푸시 알림',
             subtitle: '새로운 소식, 이벤트 알림을 받습니다',
             value: _notificationEnabled,
-            onChanged: (value) => setState(() => _notificationEnabled = value),
+            onChanged: _saveNotificationSetting,
           ),
           const Divider(height: 1),
 
@@ -215,20 +239,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _clearCache() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('캐시 삭제'),
-        content: const Text('캐시를 삭제하시겠습니까?\n임시 저장된 이미지와 데이터가 삭제됩니다.'),
+        content: const Text('캐시를 삭제하시겠습니까?\n임시 저장된 이미지와 데이터가 삭제됩니다.\n(오프라인 데이터는 유지됩니다)'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('취소'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('캐시가 삭제되었습니다')),
-              );
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              // 이미지 캐시 삭제
+              imageCache.clear();
+              imageCache.clearLiveImages();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('캐시가 삭제되었습니다')),
+                );
+              }
             },
             child: const Text('삭제'),
           ),
@@ -237,24 +266,102 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _downloadOfflineData() {
+  void _downloadOfflineData() async {
+    final offlineService = OfflineService();
+    final authProvider = context.read<AuthProvider>();
+
+    // 로그인 체크
+    if (!authProvider.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('오프라인 다운로드는 로그인이 필요합니다')),
+      );
+      return;
+    }
+
+    final currentCount = await offlineService.getOfflineCount();
+    final remaining = await offlineService.getRemainingDownloads();
+
+    if (!mounted) return;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('오프라인 데이터'),
-        content: const Text('오름 정보를 기기에 저장하시겠습니까?\n약 50MB의 저장 공간이 필요합니다.'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (currentCount > 0)
+              Text('현재 $currentCount개 오름이 저장되어 있습니다.\n다시 다운로드하면 최신 데이터로 업데이트됩니다.')
+            else
+              const Text('오름 정보를 기기에 저장하시겠습니까?\n오프라인에서도 오름 정보를 확인할 수 있습니다.'),
+            const SizedBox(height: 12),
+            Text(
+              '오늘 남은 다운로드: $remaining/${OfflineService.dailyDownloadLimit}회',
+              style: TextStyle(
+                fontSize: 12,
+                color: remaining > 0 ? Colors.grey.shade600 : Colors.red,
+              ),
+            ),
+          ],
+        ),
         actions: [
+          if (currentCount > 0)
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                await offlineService.deleteAllOfflineData();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('오프라인 데이터가 삭제되었습니다')),
+                  );
+                }
+              },
+              child: const Text('삭제', style: TextStyle(color: Colors.red)),
+            ),
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('취소'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('오프라인 데이터를 다운로드합니다.')),
-              );
-            },
+            onPressed: remaining <= 0
+                ? null
+                : () async {
+                    Navigator.pop(dialogContext);
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Row(
+                          children: [
+                            SizedBox(
+                              width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            ),
+                            SizedBox(width: 12),
+                            Text('오름 데이터 다운로드 중...'),
+                          ],
+                        ),
+                        duration: Duration(seconds: 30),
+                      ),
+                    );
+
+                    try {
+                      final savedCount = await offlineService.saveAllOreumsOffline();
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('$savedCount개 오름 데이터가 저장되었습니다')),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('$e')),
+                        );
+                      }
+                    }
+                  },
             child: const Text('다운로드'),
           ),
         ],
@@ -302,10 +409,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _rateApp() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('현재 최신 버전입니다.')),
-    );
+  void _rateApp() async {
+    final url = Uri.parse('https://play.google.com/store/apps/details?id=com.jejuoreum.app');
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('스토어를 열 수 없습니다.')),
+      );
+    }
   }
 
   void _logout(BuildContext context) {

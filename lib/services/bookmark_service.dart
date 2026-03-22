@@ -11,7 +11,7 @@ class BookmarkService {
 
     final response = await _client
         .from('bookmarks')
-        .select('*, oreums(*)')
+        .select('oreum_id')
         .eq('user_id', userId)
         .order('created_at', ascending: false);
 

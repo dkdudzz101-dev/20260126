@@ -42,6 +42,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# 환경변수 (API 키 포함)
+.env.json
+nul
+
 # 릴리즈 서명 키 (절대 커밋 금지)
 android/key.properties
 *.jks

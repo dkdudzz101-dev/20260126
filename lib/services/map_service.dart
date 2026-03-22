@@ -123,9 +123,11 @@ class MapService {
 
       return await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
+          accuracy: LocationAccuracy.bestForNavigation,
         ),
-      );
+      ).timeout(const Duration(seconds: 10), onTimeout: () {
+        return Geolocator.getLastKnownPosition().then((pos) => pos!);
+      });
     } catch (e) {
       print('Error getting current position: $e');
       return null;

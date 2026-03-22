@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../config/env_config.dart';
 
 class BlogPost {
   final String title;
@@ -43,8 +44,8 @@ class BlogPost {
 }
 
 class BlogService {
-  static const String _clientId = 'Ptn_X9wqz9PE6cXMTd1L';
-  static const String _clientSecret = 'MyIXEaspaX';
+  static const String _clientId = EnvConfig.naverClientId;
+  static const String _clientSecret = EnvConfig.naverClientSecret;
   static const String _baseUrl = 'https://openapi.naver.com/v1/search/blog.json';
 
   /// 오름 관련 블로그 검색

@@ -209,6 +209,10 @@ class _MainTabScreenState extends State<MainTabScreen> {
                     onTap: () => _showPage(context, '문의하기'),
                   ),
                   _buildDrawerItem(
+                    title: '건의사항',
+                    onTap: () => _showPage(context, '건의사항'),
+                  ),
+                  _buildDrawerItem(
                     title: '신고하기',
                     onTap: () => _showPage(context, '신고하기'),
                   ),
@@ -258,6 +262,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
     switch (title) {
       case '문의하기':
         page = const InquiryScreen();
+        break;
+      case '건의사항':
+        page = const InquiryScreen(initialTabIndex: 1);
         break;
       case '신고하기':
         page = const ReportScreen();

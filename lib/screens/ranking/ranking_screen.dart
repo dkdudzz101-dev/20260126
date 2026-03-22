@@ -117,7 +117,6 @@ class _RankingScreenState extends State<RankingScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 순위 뱃지
           Container(
             width: 24,
             height: 24,
@@ -142,7 +141,6 @@ class _RankingScreenState extends State<RankingScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          // 아바타
           Container(
             width: avatarSize,
             height: avatarSize,
@@ -178,7 +176,6 @@ class _RankingScreenState extends State<RankingScreen> {
             ),
           ),
           const SizedBox(height: 10),
-          // 닉네임
           Text(
             isMe ? '${user.nickname} (나)' : user.nickname,
             style: TextStyle(
@@ -191,7 +188,6 @@ class _RankingScreenState extends State<RankingScreen> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 4),
-          // 레벨 + 완등수
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
@@ -229,7 +225,6 @@ class _RankingScreenState extends State<RankingScreen> {
       ),
       child: Row(
         children: [
-          // 순위 번호
           SizedBox(
             width: 30,
             child: Text(
@@ -243,7 +238,6 @@ class _RankingScreenState extends State<RankingScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          // 아바타
           Container(
             width: 42,
             height: 42,
@@ -275,7 +269,6 @@ class _RankingScreenState extends State<RankingScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          // 닉네임 + 완등수
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -296,7 +289,6 @@ class _RankingScreenState extends State<RankingScreen> {
               ],
             ),
           ),
-          // 레벨 뱃지
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(

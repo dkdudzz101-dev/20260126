@@ -18,6 +18,10 @@ import '../oreum/oreum_detail_screen.dart';
 import '../oreum/oreum_search_screen.dart';
 import '../ranking/ranking_screen.dart';
 import '../exercise/exercise_screen.dart';
+import '../menu/notification_screen.dart';
+import '../menu/notice_screen.dart';
+import '../../services/notification_service.dart';
+import '../../services/notice_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onMenuTap;
@@ -31,11 +35,15 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final BannerService _bannerService = BannerService();
   final WeatherService _weatherService = WeatherService();
+  final NotificationService _notificationService = NotificationService();
   final PageController _bannerController = PageController();
 
   List<String> _bannerImages = [];
   int _currentBannerIndex = 0;
   Timer? _bannerTimer;
+
+  // 읽지 않은 알림 수
+  int _unreadNotificationCount = 0;
 
   // 오늘의 추천 오름
   OreumModel? _recommendedOreum;
@@ -52,13 +60,44 @@ class _HomeScreenState extends State<HomeScreen> {
   // 랭킹
   List<RankingUser> _topRankers = [];
 
+  // 최신 공지
+  Map<String, dynamic>? _latestNotice;
+  bool _noticeVisible = true;
+
   @override
   void initState() {
     super.initState();
     _loadData();
   }
 
+  Future<void> _loadNotificationCount() async {
+    try {
+      final count = await _notificationService.getUnreadCount();
+      if (mounted) {
+        setState(() => _unreadNotificationCount = count);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadLatestNotice() async {
+    try {
+      final notice = await NoticeService().getLatestNotice();
+      if (mounted && notice != null) {
+        setState(() {
+          _latestNotice = notice;
+          _noticeVisible = true;
+        });
+      }
+    } catch (_) {}
+  }
+
   Future<void> _loadData() async {
+    // 알림 수 로드
+    _loadNotificationCount();
+
+    // 최신 공지 로드
+    _loadLatestNotice();
+
     // 배너 로드
     final banners = await _bannerService.getBannerImages();
     if (mounted) {
@@ -78,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // 오름 데이터 로드 완료까지 대기
       await context.read<OreumProvider>().loadOreums();
-      context.read<StampProvider>().loadStamps();
+      await context.read<StampProvider>().loadStamps();
 
       // 날씨 로드 후 추천 오름 계산
       await _loadWeatherAndRecommendation();
@@ -95,7 +134,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadWeatherAndRecommendation() async {
-    final weather = await _weatherService.getCurrentWeather();
+    final weather = await _weatherService.getCurrentWeather(
+      lat: _currentPosition?.latitude,
+      lng: _currentPosition?.longitude,
+    );
     if (!mounted) return;
 
     setState(() {
@@ -287,13 +329,37 @@ class _HomeScreenState extends State<HomeScreen> {
                   // 오른쪽: 액션 버튼들
                   Row(
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.notifications_outlined, color: Colors.black87),
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('알림 기능 준비중')),
-                          );
-                        },
+                      Stack(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.notifications_outlined, color: Colors.black87),
+                            onPressed: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const NotificationScreen()),
+                              );
+                              _loadNotificationCount();
+                            },
+                          ),
+                          if (_unreadNotificationCount > 0)
+                            Positioned(
+                              right: 6,
+                              top: 6,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Colors.red,
+                                  shape: BoxShape.circle,
+                                ),
+                                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                                child: Text(
+                                  _unreadNotificationCount > 99 ? '99+' : '$_unreadNotificationCount',
+                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       IconButton(
                         icon: const Icon(Icons.menu, color: Colors.black87),
@@ -353,6 +419,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                               ),
                               const SizedBox(height: 8),
+                              if (_latestNotice != null && _noticeVisible)
+                                _buildLatestNoticeBanner(),
                               _buildRecommendedOreum(),
                               const SizedBox(height: 20),
                               _buildNearbyOreums(),
@@ -541,6 +609,50 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLatestNoticeBanner() {
+    final notice = _latestNotice!;
+    final title = notice['title'] as String? ?? '';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const NoticeScreen()),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.campaign, size: 18, color: AppColors.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => setState(() => _noticeVisible = false),
+                child: Icon(Icons.close, size: 16, color: Colors.grey.shade500),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

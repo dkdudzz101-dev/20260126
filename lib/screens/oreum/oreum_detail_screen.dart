@@ -15,6 +15,7 @@ import '../../services/blog_service.dart';
 import '../../services/map_service.dart';
 import '../../services/oreum_service.dart';
 import '../../services/stamp_service.dart';
+import '../../services/review_service.dart';
 import '../hiking/hiking_screen.dart';
 import '../map/map_screen.dart';
 import 'oreum_error_report_screen.dart';
@@ -37,6 +38,9 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   final BlogService _blogService = BlogService();
   final OreumService _oreumService = OreumService();
   final StampService _stampService = StampService();
+  final ReviewService _reviewService = ReviewService();
+  List<Map<String, dynamic>> _reviews = [];
+  double _averageRating = 0.0;
   List<PostModel> _oreumPosts = [];
   bool _isLoadingPosts = true;
   List<BlogPost> _blogPosts = [];
@@ -56,6 +60,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     _loadBlogPosts();
     _loadGalleryImages();
     _loadStampUsers();
+    _loadReviews();
   }
 
   Future<void> _loadGalleryImages() async {
@@ -98,6 +103,21 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     }
   }
 
+  Future<void> _loadReviews() async {
+    try {
+      final reviews = await _reviewService.getReviewsByOreum(oreum.id);
+      final avgRating = await _reviewService.getAverageRating(oreum.id);
+      if (mounted) {
+        setState(() {
+          _reviews = reviews;
+          _averageRating = avgRating;
+        });
+      }
+    } catch (e) {
+      // 리뷰 로딩 실패 무시
+    }
+  }
+
   List<String> get _allGalleryImages => [..._communityImages, ..._officialImages];  // 최신(커뮤니티) 먼저
 
   Future<void> _uploadGalleryImage() async {
@@ -123,9 +143,9 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
       int failCount = 0;
       final List<String> uploadedUrls = [];
 
-      for (final file in pickedFiles) {
+      for (int i = 0; i < pickedFiles.length; i++) {
         try {
-          final url = await _oreumService.uploadGalleryImage(oreum.id, file.path);
+          final url = await _oreumService.uploadGalleryImage(oreum.id, pickedFiles[i].path, index: i);
           uploadedUrls.add(url);
           successCount++;
         } catch (e) {
@@ -134,7 +154,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
         }
       }
 
-      // 업로드된 이미지를 하나의 게시글로 등록
+      // 업로드된 이미지를 하나의 게시글로 등록 (글은 반드시 1개만 생성)
       if (uploadedUrls.isNotEmpty) {
         await _oreumService.createGalleryPost(oreum.id, uploadedUrls);
       }
@@ -256,7 +276,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 ),
               if (oreum.difficulty != null) const SizedBox(width: 4),
               _buildAppBarBadge(
-                (oreum.trailStatus ?? 'checking') == 'verified' ? '확인됨' : '미확인',
+                (oreum.trailStatus ?? 'checking') == 'verified' ? '확인됨' : '정보 없음',
                 (oreum.trailStatus ?? 'checking') == 'verified' ? Colors.green : Colors.orange,
               ),
               const SizedBox(width: 4),
@@ -429,11 +449,31 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 ),
               ),
             )
-          else
+          else ...[
             ...List.generate(
-              _stampUsers.length,
+              _stampUsers.length > 5 ? 5 : _stampUsers.length,
               (index) => _buildStampUserRow(index, _stampUsers[index]),
             ),
+            if (_stampUsers.length > 5)
+              Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Center(
+                  child: Text(
+                    '외 ${_stampUsers.length - 5}명 인증',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ],
       ),
     );
@@ -534,7 +574,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   Widget _buildTrailStatusRow() {
     final isVerified = (oreum.trailStatus ?? 'checking') == 'verified';
     final color = isVerified ? Colors.green : Colors.orange;
-    final statusLabel = isVerified ? '확인됨' : '미확인';
+    final statusLabel = isVerified ? '확인됨' : '정보 없음';
 
     String dateStr = '';
     if (isVerified && oreum.trailVerifiedAt != null) {
@@ -552,7 +592,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
           const SizedBox(
             width: 60,
             child: Text(
-              '인증여부',
+              '등산로 정보',
               style: TextStyle(
                 fontSize: 14,
                 color: AppColors.textSecondary,
@@ -1260,7 +1300,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 child: OutlinedButton.icon(
                   onPressed: () => _openNavigation(context),
                   icon: const Icon(Icons.navigation),
-                  label: const Text('길안내'),
+                  label: const Text('입구로 길안내'),
                 ),
               ),
               const SizedBox(width: 12),
@@ -2028,6 +2068,15 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                       ),
                     ),
                   ),
+                  if (_reviews.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Icon(Icons.star, size: 16, color: Colors.amber),
+                    const SizedBox(width: 2),
+                    Text(
+                      _averageRating.toStringAsFixed(1),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ],
                 ],
               ),
               TextButton.icon(
@@ -2262,8 +2311,129 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     );
   }
 
-  void _showLoginRequiredDialog() {
-    LoginGuard.check(context);
+  void _showEditReviewDialog(Map<String, dynamic> review) {
+    final contentController = TextEditingController(text: review['content'] ?? '');
+    int selectedRating = review['rating'] as int? ?? 5;
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(dialogContext).viewInsets.bottom + 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        '리뷰 수정',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(dialogContext),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('별점', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: List.generate(5, (index) {
+                      return GestureDetector(
+                        onTap: () => setModalState(() => selectedRating = index + 1),
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Icon(
+                            index < selectedRating ? Icons.star : Icons.star_border,
+                            size: 32,
+                            color: Colors.amber,
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: contentController,
+                    maxLines: 4,
+                    maxLength: 200,
+                    decoration: const InputDecoration(
+                      hintText: '방문 후기를 남겨주세요...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: isSubmitting
+                          ? null
+                          : () async {
+                              setModalState(() => isSubmitting = true);
+                              try {
+                                await _reviewService.updateReview(
+                                  reviewId: review['id'].toString(),
+                                  rating: selectedRating,
+                                  content: contentController.text.trim().isNotEmpty
+                                      ? contentController.text.trim()
+                                      : null,
+                                );
+                                if (dialogContext.mounted) {
+                                  Navigator.pop(dialogContext);
+                                }
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('리뷰가 수정되었습니다')),
+                                  );
+                                  _loadReviews();
+                                }
+                              } catch (e) {
+                                setModalState(() => isSubmitting = false);
+                                if (dialogContext.mounted) {
+                                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                    SnackBar(content: Text('오류: $e')),
+                                  );
+                                }
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: isSubmitting
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('수정하기'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  bool _showLoginRequiredDialog() {
+    return LoginGuard.check(context);
   }
 
   void _shareOreum() {

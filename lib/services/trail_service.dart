@@ -3,7 +3,8 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
-import 'package:proj4dart/proj4dart.dart';
+import 'package:proj4dart/proj4dart.dart' hide Point;
+import 'package:proj4dart/src/classes/point.dart' as proj4;
 import '../config/supabase_config.dart';
 
 // 시설물 포인트 데이터
@@ -271,7 +272,7 @@ class TrailService {
 
   // TM 좌표를 WGS84로 변환
   LatLng _tmToWgs84(double x, double y) {
-    final tmPoint = Point(x: x, y: y);
+    final tmPoint = proj4.Point(x: x, y: y);
     final wgs84Point = _tmProjection.transform(_wgs84Projection, tmPoint);
     return LatLng(wgs84Point.y, wgs84Point.x);
   }

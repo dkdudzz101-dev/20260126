@@ -1,7 +1,7 @@
 name: jeju_app
 description: "제주 오름 탐험 앱"
 publish_to: 'none'
-version: 1.4.1+25
+version: 1.5.0+37
 
 environment:
   sdk: ^3.5.0
@@ -22,7 +22,7 @@ dependencies:
   go_router: ^14.8.1
 
   # 지도 & 위치
-  kakao_map_plugin: ^0.3.7
+  kakao_map_plugin: ^0.4.0
   geolocator: ^13.0.2
 
 

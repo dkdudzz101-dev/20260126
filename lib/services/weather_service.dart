@@ -1,9 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../config/env_config.dart';
 
 class WeatherService {
-  // OpenWeatherMap API (무료)
-  static const String _apiKey = 'f608cb7df83190a1358c804402a543eb';
+  static const String _apiKey = EnvConfig.openWeatherApiKey;
   static const String _baseUrl = 'https://api.openweathermap.org/data/2.5';
 
   // 기상청 단기예보 API (공공데이터)
@@ -29,14 +30,16 @@ class WeatherService {
 
     try {
       final url = '$_baseUrl/weather?lat=$latitude&lon=$longitude&appid=$_apiKey&units=metric&lang=kr';
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(
+        Uri.parse(url),
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return WeatherData.fromOpenWeatherMap(data);
       }
-    } catch (e) {
-      print('Weather API error: $e');
+    } catch (_) {
+      // API 실패 시 더미 데이터로 폴백
     }
 
     return _getDummyWeather();

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -65,7 +66,12 @@ class _ArCameraScreenState extends State<ArCameraScreen>
     WidgetsBinding.instance.addObserver(this);
     _initCamera();
     _startSensors();
-    _startLocationUpdates();
+    // 위치 권한 요청 후 위치 업데이트 시작
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await MapService.ensureLocationPermission(context);
+      if (mounted) _startLocationUpdates();
+    });
   }
 
   @override
@@ -97,9 +103,24 @@ class _ArCameraScreenState extends State<ArCameraScreen>
       if (!cameraStatus.isGranted) {
         cameraStatus = await Permission.camera.request();
         if (!cameraStatus.isGranted) {
-          if (mounted) {
-            setState(() => _errorMessage = '카메라 권한이 필요합니다.\nAR 기능을 사용하려면 설정에서 카메라 권한을 허용해주세요.');
+          if (!mounted) return;
+          // iOS는 바로 설정으로 이동 후 돌아오면 권한 재확인
+          if (Platform.isIOS) {
+            await openAppSettings();
+            if (!mounted) return;
+            // 설정에서 돌아왔을 때 권한 다시 확인
+            final recheckStatus = await Permission.camera.status;
+            if (recheckStatus.isGranted) {
+              // 권한 허용됐으면 카메라 재시작
+              _initCamera();
+            } else {
+              // 여전히 거부면 안내 후 닫기
+              setState(() => _errorMessage = '카메라 권한이 필요합니다.\n설정에서 카메라를 허용해주세요.');
+            }
+            return;
           }
+          // Android는 안내 화면 표시
+          setState(() => _errorMessage = '카메라 권한이 필요합니다.\nAR 기능을 사용하려면 설정에서 카메라 권한을 허용해주세요.');
           return;
         }
       }

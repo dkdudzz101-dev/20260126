@@ -1,25 +1,35 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/post_model.dart';
 import '../services/community_service.dart';
 import '../services/block_service.dart';
+import '../services/notification_service.dart';
 
 class CommunityProvider extends ChangeNotifier {
   final CommunityService _communityService = CommunityService();
   final BlockService _blockService = BlockService();
+  final NotificationService _notificationService = NotificationService();
 
   List<PostModel> _posts = [];
   List<CommentModel> _comments = [];
   bool _isLoading = false;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  int _currentOffset = 0;
+  static const int _pageSize = 20;
   String? _error;
   String _currentFilter = '인기';
   String? _selectedCategory;
   String? _selectedOreumId;
   final Set<String> _likedPosts = {};
+  final Set<String> _pendingLikes = {}; // 중복 요청 방지
   Set<String> _blockedUserIds = {};
 
   List<PostModel> get posts => _posts;
   List<CommentModel> get comments => _comments;
   bool get isLoading => _isLoading;
+  bool get isLoadingMore => _isLoadingMore;
+  bool get hasMore => _hasMore;
   String? get error => _error;
   String get currentFilter => _currentFilter;
   String? get selectedCategory => _selectedCategory;
@@ -32,42 +42,86 @@ class CommunityProvider extends ChangeNotifier {
   Future<void> loadPosts({String filter = '최신'}) async {
     _isLoading = true;
     _currentFilter = filter;
+    _currentOffset = 0;
+    _hasMore = true;
     _error = null;
     notifyListeners();
 
     try {
       List<Map<String, dynamic>> response;
 
-      if (filter == '인기') {
-        response = await _communityService.getPostsByPopular();
-      } else if (filter == '최신') {
-        response = await _communityService.getPostsByLatest();
+      if (_selectedOreumId != null) {
+        response = await _communityService.getPostsByOreum(_selectedOreumId!, limit: _pageSize);
+      } else if (filter == '인기') {
+        response = await _communityService.getPostsByPopular(limit: _pageSize, offset: 0);
       } else {
-        response = await _communityService.getPostsByLatest();
+        response = await _communityService.getPostsByLatest(limit: _pageSize, offset: 0);
       }
 
       _posts = response.map((data) => PostModel.fromSupabase(data)).toList();
+      _currentOffset = _posts.length;
+      _hasMore = response.length >= _pageSize;
 
-      // 차단된 사용자 게시글 필터링
-      if (_blockedUserIds.isNotEmpty) {
-        _posts = _posts.where((p) => !_blockedUserIds.contains(p.userId)).toList();
-      }
+      // 내가 좋아요한 게시글 상태 초기화
+      final likedIds = await _communityService.getMyLikedPostIds();
+      _likedPosts
+        ..clear()
+        ..addAll(likedIds);
 
-      // 카테고리 필터 적용
-      if (_selectedCategory != null && _selectedCategory != '전체') {
-        _posts = _posts.where((p) => p.category == _selectedCategory).toList();
-      }
-
-      // 오름 필터 적용
-      if (_selectedOreumId != null) {
-        _posts = _posts.where((p) => p.oreumId == _selectedOreumId).toList();
-      }
+      _applyFilters();
     } catch (e) {
       _error = e.toString();
       debugPrint('게시글 로드 오류: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  // 다음 페이지 로드
+  Future<void> loadMorePosts() async {
+    if (_isLoadingMore || !_hasMore) return;
+    _isLoadingMore = true;
+    notifyListeners();
+
+    try {
+      List<Map<String, dynamic>> response;
+
+      if (_selectedOreumId != null) {
+        response = await _communityService.getPostsByOreum(
+          _selectedOreumId!,
+          limit: _pageSize,
+          offset: _currentOffset,
+        );
+      } else if (_currentFilter == '인기') {
+        response = await _communityService.getPostsByPopular(limit: _pageSize, offset: _currentOffset);
+      } else {
+        response = await _communityService.getPostsByLatest(limit: _pageSize, offset: _currentOffset);
+      }
+
+      final newPosts = response.map((data) => PostModel.fromSupabase(data)).toList();
+      _currentOffset += newPosts.length;
+      _hasMore = response.length >= _pageSize;
+
+      _posts.addAll(newPosts);
+      _applyFilters();
+    } catch (e) {
+      debugPrint('추가 로드 오류: $e');
+    } finally {
+      _isLoadingMore = false;
+      notifyListeners();
+    }
+  }
+
+  void _applyFilters() {
+    // 차단된 사용자 게시글 필터링
+    if (_blockedUserIds.isNotEmpty) {
+      _posts = _posts.where((p) => !_blockedUserIds.contains(p.userId)).toList();
+    }
+
+    // 카테고리 필터 적용
+    if (_selectedCategory != null && _selectedCategory != '전체') {
+      _posts = _posts.where((p) => p.category == _selectedCategory).toList();
     }
   }
 
@@ -99,6 +153,11 @@ class CommunityProvider extends ChangeNotifier {
     try {
       final response = await _communityService.getMyPosts();
       _posts = response.map((data) => PostModel.fromSupabase(data)).toList();
+
+      final likedIds = await _communityService.getMyLikedPostIds();
+      _likedPosts
+        ..clear()
+        ..addAll(likedIds);
     } catch (e) {
       _error = e.toString();
       debugPrint('내 게시글 로드 오류: $e');
@@ -138,6 +197,8 @@ class CommunityProvider extends ChangeNotifier {
 
   // 좋아요 토글
   Future<void> toggleLike(String postId) async {
+    if (_pendingLikes.contains(postId)) return; // 처리 중이면 무시
+    _pendingLikes.add(postId);
     try {
       final isNowLiked = await _communityService.toggleLike(postId);
 
@@ -149,6 +210,18 @@ class CommunityProvider extends ChangeNotifier {
       if (isNowLiked) {
         _likedPosts.add(postId);
         _posts[index] = post.copyWith(likeCount: post.likeCount + 1);
+
+        // 게시글 작성자에게 좋아요 알림 (본인 제외)
+        final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+        if (post.userId.isNotEmpty && post.userId != currentUserId) {
+          _notificationService.createNotification(
+            userId: post.userId,
+            type: 'like',
+            title: '좋아요',
+            message: '회원님의 게시글에 좋아요를 눌렀습니다.',
+            data: {'post_id': postId},
+          );
+        }
       } else {
         _likedPosts.remove(postId);
         _posts[index] = post.copyWith(likeCount: post.likeCount - 1);
@@ -156,7 +229,8 @@ class CommunityProvider extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('좋아요 토글 오류: $e');
-      // 로그인 필요 등의 오류는 UI에서 처리
+    } finally {
+      _pendingLikes.remove(postId);
     }
   }
 
@@ -235,6 +309,19 @@ class CommunityProvider extends ChangeNotifier {
         final post = _posts[index];
         _posts[index] = post.copyWith(commentCount: post.commentCount + 1);
         notifyListeners();
+
+        // 게시글 작성자에게 댓글 알림 (본인 제외)
+        final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+        if (post.userId.isNotEmpty && post.userId != currentUserId) {
+          final preview = content.length > 30 ? '${content.substring(0, 30)}...' : content;
+          _notificationService.createNotification(
+            userId: post.userId,
+            type: 'comment',
+            title: '새 댓글',
+            message: preview,
+            data: {'post_id': postId},
+          );
+        }
       }
 
       return true;

@@ -20,7 +20,7 @@ class _ReportScreenState extends State<ReportScreen> {
     {'type': '부적절한 게시물', 'icon': Icons.article_outlined},
     {'type': '스팸/광고', 'icon': Icons.campaign_outlined},
     {'type': '욕설/비방', 'icon': Icons.sentiment_very_dissatisfied_outlined},
-    {'type': '허위 정보', 'icon': Icons.error_outline},
+    {'type': '잘못된 정보', 'icon': Icons.error_outline},
     {'type': '저작권 침해', 'icon': Icons.copyright_outlined},
     {'type': '기타', 'icon': Icons.more_horiz},
   ];

@@ -11,6 +11,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
+import '../config/kakao_config.dart';
 
 class UserInfo {
   final String id;
@@ -34,6 +35,7 @@ class AuthProvider extends ChangeNotifier {
   String? _profileImage;
   String? _provider;
   double? _weight; // 체중 (칼로리 계산용)
+  bool _authListenerInitialized = false; // 리스너 중복 방지
 
   final _storage = const FlutterSecureStorage();
   final _supabase = SupabaseConfig.client;
@@ -64,24 +66,27 @@ class AuthProvider extends ChangeNotifier {
 
   // 앱 시작 시 저장된 로그인 정보 확인
   Future<void> checkLoginStatus() async {
-    // Supabase 인증 상태 변경 리스너
-    _supabase.auth.onAuthStateChange.listen((data) {
-      final event = data.event;
-      final session = data.session;
-      debugPrint('Auth 상태 변경: $event');
+    // Supabase 인증 상태 변경 리스너 (중복 등록 방지)
+    if (!_authListenerInitialized) {
+      _authListenerInitialized = true;
+      _supabase.auth.onAuthStateChange.listen((data) {
+        final event = data.event;
+        final session = data.session;
+        debugPrint('Auth 상태 변경: $event');
 
-      if (event == AuthChangeEvent.signedIn && session != null) {
-        _handleOAuthSignIn(session);
-      } else if (event == AuthChangeEvent.signedOut) {
-        _isLoggedIn = false;
-        _odId = null;
-        _nickname = null;
-        _email = null;
-        _profileImage = null;
-        _provider = null;
-        notifyListeners();
-      }
-    });
+        if (event == AuthChangeEvent.signedIn && session != null) {
+          _handleOAuthSignIn(session);
+        } else if (event == AuthChangeEvent.signedOut) {
+          _isLoggedIn = false;
+          _odId = null;
+          _nickname = null;
+          _email = null;
+          _profileImage = null;
+          _provider = null;
+          notifyListeners();
+        }
+      });
+    }
 
     // Supabase 세션 확인
     final session = _supabase.auth.currentSession;
@@ -162,8 +167,12 @@ class AuthProvider extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('OAuth 사용자 정보 조회 에러: $e');
-      _nickname = defaultNickname;
-      _profileImage = defaultProfileImage;
+      // DB 조회 실패 시 로컬 캐시된 닉네임 유지, 없으면 소셜 기본값
+      final cachedNickname = await _storage.read(key: 'nickname');
+      _nickname = cachedNickname ?? defaultNickname;
+      final cachedProfileImage = await _storage.read(key: 'profileImage');
+      _profileImage = cachedProfileImage ?? defaultProfileImage;
+      debugPrint('프로필 로드 실패, 캐시된 닉네임 유지: $_nickname');
     }
 
     // 로컬 저장소에 저장
@@ -315,8 +324,8 @@ class AuthProvider extends ChangeNotifier {
   // 카카오 authorization code로 토큰 교환
   Future<bool> _exchangeKakaoToken(String code) async {
     try {
-      const clientId = 'd4b730c14857dce93c9ba94e30f56260';
-      const redirectUri = 'kakaod4b730c14857dce93c9ba94e30f56260://oauth';
+      final clientId = KakaoConfig.nativeAppKey;
+      final redirectUri = 'kakao${KakaoConfig.nativeAppKey}://oauth';
 
       final response = await http.post(
         Uri.parse('https://kauth.kakao.com/oauth/token'),
@@ -756,23 +765,18 @@ class AuthProvider extends ChangeNotifier {
         return {'success': false, 'error': '이미 사용 중인 이메일입니다.'};
       }
 
-      // 3. 아이디 중복 확인
+      // 3. 아이디 중복 확인 (users 테이블 직접 조회)
       try {
-        await _supabase.auth.signInWithPassword(
-          email: authEmail,
-          password: password,
-        );
-        // 로그인 성공 = 이미 존재하는 아이디
-        await _supabase.auth.signOut();
-        return {'success': false, 'error': '이미 사용 중인 아이디입니다.'};
-      } on AuthException catch (e) {
-        if (!e.message.contains('Invalid login credentials')) {
-          if (e.message.contains('Email not confirmed')) {
-            debugPrint('이메일 미인증 상태, 회원가입 진행');
-          } else {
-            return {'success': false, 'error': '회원가입 중 오류가 발생했습니다.'};
-          }
+        final idCheck = await _supabase
+            .from('users')
+            .select('id')
+            .eq('od_id', 'local_$userId')
+            .maybeSingle();
+        if (idCheck != null) {
+          return {'success': false, 'error': '이미 사용 중인 아이디입니다.'};
         }
+      } catch (e) {
+        debugPrint('아이디 중복 확인 에러: $e');
       }
 
       // 회원가입
@@ -917,6 +921,8 @@ class AuthProvider extends ChangeNotifier {
 
       // users 테이블에서 닉네임 가져오기
       final supabaseUserId = _supabase.auth.currentUser?.id;
+      final cachedNickname = await _storage.read(key: 'nickname');
+      final cachedProfileImage = await _storage.read(key: 'profileImage');
       if (supabaseUserId != null) {
         try {
           final userData = await _supabase
@@ -924,10 +930,13 @@ class AuthProvider extends ChangeNotifier {
               .select('nickname, profile_image')
               .eq('id', supabaseUserId)
               .maybeSingle();
-          _nickname = userData?['nickname'] ?? '제주탐험가';
-          _profileImage = userData?['profile_image'];
+          _nickname = userData?['nickname'] ?? cachedNickname ?? '제주탐험가';
+          _profileImage = userData?['profile_image'] ?? cachedProfileImage;
         } catch (e) {
-          _nickname = '제주탐험가';
+          // DB 조회 실패 시 로컬 캐시된 닉네임 유지
+          _nickname = cachedNickname ?? '제주탐험가';
+          _profileImage = cachedProfileImage;
+          debugPrint('프로필 로드 실패, 캐시된 닉네임 유지: $_nickname');
         }
       }
 

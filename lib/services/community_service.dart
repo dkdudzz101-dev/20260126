@@ -10,7 +10,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByPopular({int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .select('*, users(nickname, profile_image), oreums(name)')
         .order('like_count', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -21,7 +21,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByLatest({int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .select('*, users(nickname, profile_image), oreums(name)')
         .order('created_at', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -29,13 +29,13 @@ class CommunityService {
   }
 
   // 오름별 게시글 가져오기
-  Future<List<Map<String, dynamic>>> getPostsByOreum(String oreumId, {int limit = 20}) async {
+  Future<List<Map<String, dynamic>>> getPostsByOreum(String oreumId, {int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .select('*, users(nickname, profile_image), oreums(name)')
         .eq('oreum_id', oreumId)
         .order('created_at', ascending: false)
-        .limit(limit);
+        .range(offset, offset + limit - 1);
 
     return List<Map<String, dynamic>>.from(response);
   }
@@ -47,7 +47,7 @@ class CommunityService {
 
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .select('*, users(nickname, profile_image), oreums(name)')
         .eq('user_id', userId)
         .order('created_at', ascending: false);
 
@@ -59,7 +59,7 @@ class CommunityService {
     try {
       final response = await _client
           .from('posts')
-          .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+          .select('*, users(nickname, profile_image), oreums(name)')
           .eq('id', postId)
           .maybeSingle();
 
@@ -190,6 +190,21 @@ class CommunityService {
         .eq('user_id', userId);
 
     return (response as List).isNotEmpty;
+  }
+
+  // 내가 좋아요한 게시글 ID 목록 한 번에 가져오기
+  Future<Set<String>> getMyLikedPostIds() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return {};
+
+    final response = await _client
+        .from('likes')
+        .select('post_id')
+        .eq('user_id', userId);
+
+    return (response as List)
+        .map((row) => row['post_id'] as String)
+        .toSet();
   }
 
   // 이미지 업로드

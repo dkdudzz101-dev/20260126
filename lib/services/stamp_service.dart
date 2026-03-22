@@ -1,10 +1,14 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
 import 'oreum_service.dart';
+import 'badge_service.dart';
+import 'notification_service.dart';
 
 class StampService {
   final SupabaseClient _client = SupabaseConfig.client;
   final OreumService _oreumService = OreumService();
+  final BadgeService _badgeService = BadgeService();
+  final NotificationService _notificationService = NotificationService();
 
   // 스탬프 기록 저장 (stamp ID 반환) - 완등 인증용
   Future<String?> recordStamp({
@@ -331,25 +335,21 @@ class StampService {
     }
   }
 
-  // 뱃지 체크 및 부여
+  // 뱃지 체크 및 부여 (DB 기반 동적 조건 확인)
   Future<void> _checkAndAwardBadges(String userId) async {
     try {
       final stampCount = await getStampCount();
+      final totalDistance = await getTotalDistance();
 
-      // 완등 수 기반 뱃지
-      final completionBadges = {
-        1: 'first_oreum',
-        5: 'oreum_5',
-        10: 'oreum_10',
-        30: 'oreum_30',
-        100: 'oreum_100',
-        368: 'oreum_all',
-      };
+      // BadgeService를 통해 DB에서 조건을 동적으로 확인
+      final earnableBadges = await _badgeService.checkEarnableBadges(
+        userId: userId,
+        stampCount: stampCount,
+        totalDistance: totalDistance,
+      );
 
-      for (final entry in completionBadges.entries) {
-        if (stampCount >= entry.key) {
-          await _awardBadge(userId, entry.value);
-        }
+      for (final badge in earnableBadges) {
+        await _awardBadge(userId, badge.id);
       }
     } catch (e) {
       // 뱃지 체크 실패 시 무시
@@ -359,12 +359,39 @@ class StampService {
   // 뱃지 부여
   Future<void> _awardBadge(String userId, String badgeId) async {
     try {
+      // 이미 보유한 뱃지인지 확인
+      final existing = await _client
+          .from('user_badges')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('badge_id', badgeId);
+
+      if ((existing as List).isNotEmpty) return;
+
       await _client.from('user_badges').upsert({
         'user_id': userId,
         'badge_id': badgeId,
       });
+
+      // 배지 이름 조회 후 알림
+      try {
+        final badgeData = await _client
+            .from('badges')
+            .select('name')
+            .eq('id', badgeId)
+            .maybeSingle();
+        final badgeName = badgeData?['name'] ?? '새로운 배지';
+
+        _notificationService.createNotification(
+          userId: userId,
+          type: 'badge',
+          title: '배지 획득!',
+          message: '축하합니다! "$badgeName" 배지를 획득했습니다.',
+          data: {'badge_id': badgeId},
+        );
+      } catch (_) {}
     } catch (e) {
-      // 이미 보유한 뱃지면 무시
+      // 뱃지 부여 실패 시 무시
     }
   }
 

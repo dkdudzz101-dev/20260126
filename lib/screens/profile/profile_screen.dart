@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../theme/app_colors.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../config/supabase_config.dart';
@@ -79,6 +80,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
 
     if (source == null) return;
+
+    // 카메라 선택 시 권한 요청
+    if (source == ImageSource.camera) {
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        if (dialogContext.mounted) {
+          ScaffoldMessenger.of(dialogContext).showSnackBar(
+            SnackBar(
+              content: const Text('카메라 권한이 필요합니다. 설정에서 권한을 허용해주세요.'),
+              action: SnackBarAction(
+                label: '설정',
+                onPressed: () => openAppSettings(),
+              ),
+            ),
+          );
+        }
+        return;
+      }
+    }
 
     try {
       final XFile? image = await _picker.pickImage(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -68,6 +69,12 @@ class BackgroundLocationPermissionScreen extends StatelessWidget {
                 title: '등산 종료 시 즉시 중단',
                 description: '등산을 종료하면 백그라운드 위치 수집이 즉시 중단됩니다.',
               ),
+              const SizedBox(height: 16),
+              _buildPurposeItem(
+                icon: Icons.directions_walk,
+                title: '걸음수 측정',
+                description: '신체 활동 정보를 사용하여 등산 중 걸음수와 칼로리를 측정합니다.',
+              ),
               const SizedBox(height: 20),
               // 안내 메시지
               Container(
@@ -82,7 +89,7 @@ class BackgroundLocationPermissionScreen extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        '다음 화면에서 위치 권한을 "항상 허용"으로 설정해주세요.',
+                        '다음 화면에서 위치 권한을 "항상 허용"으로, 신체 활동 권한을 "허용"으로 설정해주세요.',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -187,11 +194,74 @@ class BackgroundLocationPermissionScreen extends StatelessWidget {
 
   Future<void> _onAgree(BuildContext context) async {
     // 포그라운드 권한은 _startHiking에서 이미 확보된 상태
-    // 백그라운드 위치 권한 요청
-    final result = await Permission.locationAlways.request();
-
-    if (context.mounted) {
-      Navigator.pop(context, result.isGranted);
+    // 백그라운드 위치 권한 요청 (Android 10+에서 시스템 설정으로 이동할 수 있으므로 타임아웃 적용)
+    bool granted = false;
+    try {
+      final result = await Permission.locationAlways.request()
+          .timeout(const Duration(seconds: 20), onTimeout: () => PermissionStatus.denied);
+      granted = result.isGranted;
+    } catch (_) {
+      granted = false;
     }
+
+    if (!context.mounted) return;
+
+    // "항상 허용"이 아닌 경우 설정으로 재안내
+    if (!granted) {
+      await _showSettingsGuideDialog(context);
+      return;
+    }
+
+    // 신체 활동(걸음수) 권한 요청
+    try {
+      await Permission.activityRecognition.request();
+    } catch (_) {}
+
+    if (!context.mounted) return;
+    Navigator.pop(context, true);
+  }
+
+  Future<void> _showSettingsGuideDialog(BuildContext context) async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          '항상 허용 설정 필요',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          '등산 중 화면을 꺼도 경로가 기록되려면\n위치 권한을 "항상 허용"으로 설정해야 합니다.\n\n설정 앱에서\n위치 → 항상 허용\n으로 변경해주세요.',
+          style: TextStyle(fontSize: 14, height: 1.6),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.pop(context, false); // 설정 거부 → 그냥 시작
+            },
+            child: Text('나중에', style: TextStyle(color: Colors.grey[600])),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await openAppSettings(); // 설정 앱 이동
+              // 설정에서 돌아왔을 때 권한 재확인
+              if (context.mounted) {
+                final status = await Permission.locationAlways.status;
+                Navigator.pop(context, status.isGranted);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4CAF50),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('설정으로 이동'),
+          ),
+        ],
+      ),
+    );
   }
 }

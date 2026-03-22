@@ -245,12 +245,12 @@ class OreumService {
 
   // 사용자 갤러리 이미지 업로드 (posts 버킷 사용 + 커뮤니티 게시글로 등록)
   /// 갤러리 이미지 1장 업로드 (스토리지만, 게시글 X)
-  Future<String> uploadGalleryImage(String oreumId, String filePath) async {
+  Future<String> uploadGalleryImage(String oreumId, String filePath, {int index = 0}) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw Exception('로그인이 필요합니다');
 
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final fileName = 'gallery_${oreumId}_$timestamp.jpg';
+    final fileName = 'gallery_${oreumId}_${timestamp}_$index.jpg';
     final storagePath = 'images/$fileName';
 
     final file = File(filePath);

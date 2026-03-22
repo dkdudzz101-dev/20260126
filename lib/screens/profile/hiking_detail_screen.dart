@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'package:image_picker/image_picker.dart';
@@ -8,6 +9,12 @@ import '../../services/hiking_route_service.dart';
 import '../../services/stamp_service.dart';
 import '../../services/share_service.dart';
 import '../../widgets/hiking_share_card.dart';
+
+class _KmPoint {
+  final int km;
+  final LatLng latLng;
+  _KmPoint({required this.km, required this.latLng});
+}
 
 class HikingDetailScreen extends StatefulWidget {
   final StampModel stamp;
@@ -26,6 +33,12 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
   bool _isLoading = true;
   KakaoMapController? _mapController;
 
+  // 지도 확장 & km 선택
+  bool _isMapExpanded = false;
+  List<_KmPoint> _kmPoints = [];
+  int? _selectedKm;
+  double _mapRatio = 0.4; // 지도 높이 비율 (0.2 ~ 0.8)
+
   @override
   void initState() {
     super.initState();
@@ -43,6 +56,8 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
         data = await _routeService.getRouteWithPhotos(widget.stamp.id);
       }
 
+      debugPrint('경로 조회 결과: data=${data != null}, route_data=${data?['route_data'] != null}, points=${(data?['route_data'] as List?)?.length ?? 0}');
+
       if (mounted) {
         setState(() {
           if (data != null) {
@@ -55,13 +70,45 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
           }
           _isLoading = false;
         });
+        if (_routeData != null) _calculateKmPoints();
       }
     } catch (e) {
-      debugPrint('경로 로드 실패: $e');
+      debugPrint('경로 로드 실패: $e (stamp.id=${widget.stamp.id}, type=${widget.stamp.recordType})');
       if (mounted) {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  void _calculateKmPoints() {
+    if (_routeData == null || _routeData!.isEmpty) return;
+    final pts = _routeData!
+        .where((p) => p['lat'] != null && p['lng'] != null)
+        .map((p) => LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()))
+        .toList();
+
+    final kms = <_KmPoint>[];
+    double cum = 0;
+    int next = 1;
+    for (int i = 1; i < pts.length; i++) {
+      cum += _haversine(pts[i - 1], pts[i]);
+      if (cum >= next * 1000) {
+        kms.add(_KmPoint(km: next, latLng: pts[i]));
+        next++;
+      }
+    }
+    setState(() => _kmPoints = kms);
+  }
+
+  double _haversine(LatLng a, LatLng b) {
+    const r = 6371000.0;
+    final lat1 = a.latitude * math.pi / 180;
+    final lat2 = b.latitude * math.pi / 180;
+    final dLat = (b.latitude - a.latitude) * math.pi / 180;
+    final dLng = (b.longitude - a.longitude) * math.pi / 180;
+    final x = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1) * math.cos(lat2) * math.sin(dLng / 2) * math.sin(dLng / 2);
+    return r * 2 * math.atan2(math.sqrt(x), math.sqrt(1 - x));
   }
 
   Future<void> _shareRecord() async {
@@ -438,30 +485,54 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
         : stamp.oreumName;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(title),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: _shareRecord,
-            tooltip: '공유',
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // 지도 영역
-          Expanded(
-            flex: 2,
-            child: _buildMap(),
-          ),
-          // 통계 영역
-          Expanded(
-            flex: 3,
-            child: _buildStats(),
-          ),
-        ],
-      ),
+      appBar: _isMapExpanded
+          ? null
+          : AppBar(
+              title: Text(title),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.share),
+                  onPressed: _shareRecord,
+                  tooltip: '공유',
+                ),
+              ],
+            ),
+      body: _isMapExpanded
+          ? _buildFullscreenMap()
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final mapHeight = constraints.maxHeight * _mapRatio;
+                return Column(
+                  children: [
+                    SizedBox(height: mapHeight, child: _buildMap()),
+                    // 드래그 핸들
+                    GestureDetector(
+                      onVerticalDragUpdate: (details) {
+                        setState(() {
+                          _mapRatio += details.delta.dy / constraints.maxHeight;
+                          _mapRatio = _mapRatio.clamp(0.2, 0.8);
+                        });
+                      },
+                      child: Container(
+                        height: 20,
+                        color: Colors.transparent,
+                        child: Center(
+                          child: Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[400],
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(child: _buildStats()),
+                  ],
+                );
+              },
+            ),
     );
   }
 
@@ -470,13 +541,64 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final kakaoMap = _buildKakaoMap();
+
+    return Stack(
+      children: [
+        kakaoMap,
+        // 경로 없음 안내
+        if (_routeData == null || _routeData!.isEmpty)
+          Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                '경로 데이터가 없습니다',
+                style: TextStyle(color: Colors.white, fontSize: 13),
+              ),
+            ),
+          ),
+        // km 선택 칩 (하단)
+        if (_kmPoints.isNotEmpty)
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _buildKmSelector(),
+          ),
+        // 전체화면 버튼 (우상단)
+        Positioned(
+          top: 8,
+          right: 8,
+          child: GestureDetector(
+            onTap: () => setState(() => _isMapExpanded = true),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.fullscreen, color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildKakaoMap() {
     final polylines = <Polyline>[];
+    final markers = <Marker>{};
+    final customOverlays = <CustomOverlay>[];
     LatLng? center;
 
     if (_routeData != null && _routeData!.isNotEmpty) {
       final points = _routeData!
           .where((p) => p['lat'] != null && p['lng'] != null)
-          .map((p) => LatLng(p['lat'].toDouble(), p['lng'].toDouble()))
+          .map((p) => LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()))
           .toList();
 
       if (points.isNotEmpty) {
@@ -488,20 +610,256 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
           strokeColor: AppColors.primary,
           strokeWidth: 4,
         ));
+
+        // 출발 마커 (초록)
+        markers.add(Marker(
+          markerId: 'start',
+          latLng: points.first,
+          markerImageSrc:
+              'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36"><path d="M14 0C6.268 0 0 6.268 0 14c0 9.333 14 22 14 22s14-12.667 14-22C28 6.268 21.732 0 14 0z" fill="%234CAF50" stroke="white" stroke-width="2"/><circle cx="14" cy="14" r="5" fill="white"/></svg>',
+          width: 28,
+          height: 36,
+        ));
+
+        // 도착 마커 (빨강)
+        markers.add(Marker(
+          markerId: 'end',
+          latLng: points.last,
+          markerImageSrc:
+              'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36"><path d="M14 0C6.268 0 0 6.268 0 14c0 9.333 14 22 14 22s14-12.667 14-22C28 6.268 21.732 0 14 0z" fill="%23F44336" stroke="white" stroke-width="2"/><circle cx="14" cy="14" r="5" fill="white"/></svg>',
+          width: 28,
+          height: 36,
+        ));
       }
     }
+
+    // km 배지 CustomOverlay
+    for (final km in _kmPoints) {
+      final isSelected = _selectedKm == km.km;
+      final bg = isSelected ? '%234CAF50' : '%23ffffff';
+      final fg = isSelected ? '%23ffffff' : '%234CAF50';
+      customOverlays.add(CustomOverlay(
+        customOverlayId: 'km_${km.km}',
+        latLng: km.latLng,
+        content:
+            '<div style="background:$bg;border:2px solid %234CAF50;border-radius:12px;padding:2px 7px;font-size:11px;font-weight:700;color:$fg;white-space:nowrap;">${km.km}km</div>',
+        yAnchor: 1.0,
+      ));
+    }
+
+    // 기본 center: 경로 중간점 → 오름 좌표 → 제주 중심
+    final defaultCenter = LatLng(widget.stamp.lat, widget.stamp.lng);
 
     return KakaoMap(
       onMapCreated: (controller) {
         _mapController = controller;
-        if (center != null) {
+        if (_routeData != null && _routeData!.isNotEmpty) {
+          _fitBoundsToRoute(_routeData!
+              .where((p) => p['lat'] != null && p['lng'] != null)
+              .map((p) => LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()))
+              .toList());
+        } else if (center != null) {
           controller.setCenter(center);
         }
       },
-      center: center ?? LatLng(33.3617, 126.5292),
+      center: center ?? defaultCenter,
       currentLevel: 4,
       polylines: polylines,
+      markers: markers.toList(),
+      customOverlays: customOverlays,
     );
+  }
+
+  // 전체화면 지도 (AppBar 없이, 뒤로가기+km선택 오버레이)
+  Widget _buildFullscreenMap() {
+    return SafeArea(
+      child: Stack(
+        children: [
+          _buildKakaoMap(),
+          // 닫기 버튼
+          Positioned(
+            top: 12,
+            left: 12,
+            child: GestureDetector(
+              onTap: () => setState(() {
+                _isMapExpanded = false;
+                _selectedKm = null;
+                // 전체 경로 다시 맞춤
+                if (_routeData != null && _routeData!.isNotEmpty) {
+                  Future.delayed(const Duration(milliseconds: 100), () {
+                    _fitBoundsToRoute(_routeData!
+                        .where((p) => p['lat'] != null && p['lng'] != null)
+                        .map((p) => LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()))
+                        .toList());
+                  });
+                }
+              }),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 22),
+              ),
+            ),
+          ),
+          // 전체 경로 버튼 (km 선택 중일 때)
+          if (_selectedKm != null)
+            Positioned(
+              top: 12,
+              right: 12,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _selectedKm = null);
+                  if (_routeData != null) {
+                    _fitBoundsToRoute(_routeData!
+                        .where((p) => p['lat'] != null && p['lng'] != null)
+                        .map((p) => LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()))
+                        .toList());
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('전체 경로', style: TextStyle(color: Colors.white, fontSize: 13)),
+                ),
+              ),
+            ),
+          // km 선택 칩 (하단)
+          if (_kmPoints.isNotEmpty)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: _buildKmSelector(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKmSelector() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.55),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('구간 선택', style: TextStyle(color: Colors.white70, fontSize: 11)),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                // 전체 버튼
+                _buildKmChip(
+                  label: '전체',
+                  isSelected: _selectedKm == null,
+                  onTap: () {
+                    setState(() => _selectedKm = null);
+                    if (_routeData != null) {
+                      _fitBoundsToRoute(_routeData!
+                          .where((p) => p['lat'] != null && p['lng'] != null)
+                          .map((p) => LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()))
+                          .toList());
+                    }
+                  },
+                ),
+                const SizedBox(width: 6),
+                ..._kmPoints.map((km) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: _buildKmChip(
+                        label: '${km.km}km',
+                        isSelected: _selectedKm == km.km,
+                        onTap: () {
+                          setState(() => _selectedKm = km.km);
+                          _mapController?.setCenter(km.latLng);
+                          _mapController?.setLevel(2); // 해당 지점 확대
+                        },
+                      ),
+                    )),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKmChip({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary : Colors.white.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : Colors.white38,
+            width: 1.5,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.white,
+            fontSize: 13,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _fitBoundsToRoute(List<LatLng> points) {
+    if (points.isEmpty || _mapController == null) return;
+
+    double minLat = points[0].latitude;
+    double maxLat = points[0].latitude;
+    double minLng = points[0].longitude;
+    double maxLng = points[0].longitude;
+
+    for (final p in points) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+
+    // 여백 10%
+    final latPad = (maxLat - minLat) * 0.15;
+    final lngPad = (maxLng - minLng) * 0.15;
+    minLat -= latPad; maxLat += latPad;
+    minLng -= lngPad; maxLng += lngPad;
+
+    final centerLat = (minLat + maxLat) / 2;
+    final centerLng = (minLng + maxLng) / 2;
+
+    final maxDiff = (maxLat - minLat) > (maxLng - minLng)
+        ? (maxLat - minLat)
+        : (maxLng - minLng);
+
+    int zoom;
+    if (maxDiff < 0.001) { zoom = 1; }
+    else if (maxDiff < 0.002) { zoom = 2; }
+    else if (maxDiff < 0.004) { zoom = 3; }
+    else if (maxDiff < 0.008) { zoom = 4; }
+    else if (maxDiff < 0.015) { zoom = 5; }
+    else if (maxDiff < 0.03) { zoom = 6; }
+    else { zoom = 7; }
+
+    _mapController!.setCenter(LatLng(centerLat, centerLng));
+    _mapController!.setLevel(zoom);
   }
 
   Widget _buildStats() {
@@ -519,7 +877,7 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
+                  color: AppColors.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
@@ -535,8 +893,8 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: stamp.isStamp
-                      ? Colors.green.withOpacity(0.1)
-                      : Colors.orange.withOpacity(0.1),
+                      ? Colors.green.withValues(alpha: 0.1)
+                      : Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(

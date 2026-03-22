@@ -4,8 +4,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../theme/app_colors.dart';
 import '../../models/oreum_model.dart';
 import '../../services/map_service.dart';
@@ -20,6 +22,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/stamp_provider.dart';
+import '../../providers/badge_provider.dart';
 import '../../utils/login_guard.dart';
 import '../../widgets/hiking_share_card.dart';
 import '../oreum/oreum_error_report_screen.dart';
@@ -46,6 +49,10 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
 
   // 현재 위치 커스텀 오버레이
   Set<CustomOverlay> _userLocationOverlay = {};
+
+  // 나침반 (방향 화살표)
+  double _currentHeading = 0;
+  StreamSubscription<CompassEvent>? _compassSubscription;
 
   // 정상 인증 범위 원 (100m 반경)
   Set<Circle> _summitRangeCircle = {};
@@ -114,6 +121,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   // 사진 촬영
   final ImagePicker _imagePicker = ImagePicker();
   List<File> _hikingPhotos = [];
+  List<LatLng> _hikingPhotoLocations = []; // 사진 촬영 위치
 
   // 지도 캡처용 키
   final GlobalKey _mapKey = GlobalKey();
@@ -125,6 +133,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     _initializeLocation();
     _loadTrail(); // 등산로 로드
     _restoreHikingState(); // 저장된 등산 상태 복원
+    _startCompassTracking(); // 나침반 방향 추적
     if (widget.autoStart) {
       _isStarting = true; // 첫 프레임부터 "등반 시작" 버튼 숨김
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -246,7 +255,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       // 선택 상태에 따라 마커 ID 변경하여 강제 업데이트
       final markerIdSuffix = isSelected ? '_selected' : '';
 
-      final label = facility.description.isNotEmpty
+      final label = (facility.description ?? '').isNotEmpty
           ? '${facility.type} - ${facility.description}'
           : facility.type;
       markers.add(
@@ -270,6 +279,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _compassSubscription?.cancel();
     _mapService.stopTracking();
     _mapService.dispose();
     // 등반 중이었다면 백그라운드 서비스도 종료
@@ -277,6 +287,28 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       BackgroundLocationService.stopService();
     }
     super.dispose();
+  }
+
+  void _startCompassTracking() {
+    _compassSubscription?.cancel();
+    _compassSubscription = FlutterCompass.events?.listen((event) {
+      final heading = event.heading;
+      if (heading != null && mounted && _currentPosition != null) {
+        if ((_currentHeading - heading).abs() >= 1) {
+          _currentHeading = heading;
+          _updateArrowHeadingOnly(_currentHeading);
+        }
+      }
+    });
+  }
+
+  void _updateArrowHeadingOnly(double heading) {
+    _mapController?.webViewController.runJavaScript(
+      "(function(){"
+      "var el=document.getElementById('user_arrow');"
+      "if(el){el.style.transform='translateX(-50%) rotate(${heading.round()}deg)';}"
+      "})();",
+    );
   }
 
   @override
@@ -462,12 +494,16 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
 
   /// 권한이 이미 있을 때만 위치 로드 (initState용, 권한 요청 안 함)
   Future<void> _initializeLocation() async {
+    // 이미 권한이 있을 때만 위치 가져오기 (권한 요청은 등반 시작 시)
     final position = await _mapService.getCurrentPosition();
     if (position != null && mounted) {
       setState(() {
         _currentPosition = position;
       });
       _updateMarkers();
+      _mapController?.setCenter(
+        LatLng(position.latitude, position.longitude),
+      );
     }
   }
 
@@ -528,9 +564,15 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
           CustomOverlay(
             customOverlayId: 'user_location_${DateTime.now().millisecondsSinceEpoch}',
             latLng: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-            content: '<div style="width:30px;height:42px;position:relative;"><div style="width:30px;height:30px;background:linear-gradient(135deg,#ff6b6b,#e53935);border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 3px 8px rgba(0,0,0,0.4);"></div><div style="position:absolute;top:8px;left:8px;width:14px;height:14px;background:white;border-radius:50%;"></div></div>',
+            content: '<div style="width:50px;height:50px;position:relative;">'
+                '<div id="user_arrow" style="position:absolute;top:0;left:50%;transform:translateX(-50%) rotate(${_currentHeading.round()}deg);width:20px;height:50px;transform-origin:center center;transition:transform 0.2s linear;">'
+                '<div style="width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-bottom:16px solid rgba(229,57,53,0.5);margin:0 auto;"></div>'
+                '</div>'
+                '<div style="position:absolute;top:10px;left:10px;width:30px;height:30px;background:linear-gradient(135deg,#ff6b6b,#e53935);border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 3px 8px rgba(0,0,0,0.4);"></div>'
+                '<div style="position:absolute;top:18px;left:18px;width:14px;height:14px;background:white;border-radius:50%;"></div>'
+                '</div>',
             xAnchor: 0.5,
-            yAnchor: 1.0,
+            yAnchor: 0.5,
             zIndex: 100,
           ),
         };
@@ -609,8 +651,8 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   }
 
   void _startHiking() async {
-    // 이미 시작 처리 중이면 무시 (중복 방지)
-    if (_isStarting || _isHiking) return;
+    // 이미 등산 중이면 무시 (중복 방지)
+    if (_isHiking) return;
 
     // 로그인 체크
     if (!LoginGuard.check(context, message: '등산을 시작하려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
@@ -630,12 +672,21 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     }
 
     // 2단계: 백그라운드 위치 권한 확보 (전체화면 공개 포함)
+    // 타임아웃은 BackgroundLocationPermissionScreen 내부(20초)에서 처리
     final bgGranted = await _requestBackgroundLocationWithDisclosure();
 
     if (!mounted) return;
 
-    // 걸음수 권한 요청 및 초기화
-    final actStatus = await Permission.activityRecognition.request();
+    if (!bgGranted) {
+      setState(() => _isStarting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('등산을 시작하려면 위치 권한을 "항상 허용"으로 설정해주세요')),
+      );
+      return;
+    }
+
+    // 걸음수 초기화 (권한은 백그라운드 위치 설명 화면에서 이미 요청됨)
+    final actStatus = await Permission.activityRecognition.status;
     if (actStatus.isGranted && mounted) {
       final pedometer = context.read<PedometerService>();
       if (!pedometer.isInitialized) {
@@ -644,6 +695,18 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     }
 
     if (!mounted) return;
+
+    // 권한 획득 후 현재 위치 갱신
+    final position = await _mapService.getCurrentPosition();
+    if (position != null && mounted) {
+      setState(() {
+        _currentPosition = position;
+      });
+      _updateMarkers();
+      _mapController?.setCenter(
+        LatLng(position.latitude, position.longitude),
+      );
+    }
 
     // 시작 걸음수 기록
     final pedometer = context.read<PedometerService>();
@@ -940,6 +1003,13 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       );
     }
 
+    // 백그라운드에서 측정된 걸음수 동기화
+    final pedometer = context.read<PedometerService>();
+    await pedometer.syncFromBackground();
+    final currentSteps = pedometer.todaySteps;
+    _hikingSteps = currentSteps - _startSteps;
+    if (_hikingSteps < 0) _hikingSteps = 0;
+
     // 백그라운드 위치 서비스 종료
     await BackgroundLocationService.stopService();
 
@@ -995,6 +1065,11 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       }
     }
 
+    debugPrint('=== 등산 완료 ===');
+    debugPrint('trackPositions: ${_trackPositions.length}개');
+    debugPrint('reachedSummit: $_reachedSummit');
+    debugPrint('photos: ${_hikingPhotos.length}개');
+
     // 정상 100m 이내를 지나지 않았으면 스탬프 저장 안함
     if (!_reachedSummit) {
       // 등반 기록만 저장 (hiking_logs 테이블)
@@ -1017,6 +1092,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
         );
 
         // GPS 경로 저장 (미완등 시에도 저장)
+        debugPrint('경로 저장 시도: logId=$logId, positions=${_trackPositions.length}');
         if (logId != null && _trackPositions.isNotEmpty) {
           try {
             await _hikingRouteService.saveRoute(
@@ -1025,9 +1101,12 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
               positions: _trackPositions,
               photoUrls: photoUrls.isNotEmpty ? photoUrls : null,
             );
+            debugPrint('경로 저장 성공!');
           } catch (e) {
             debugPrint('경로 저장 실패: $e');
           }
+        } else {
+          debugPrint('경로 저장 건너뜀: logId=$logId, positions=${_trackPositions.length}');
         }
       } catch (e) {
         debugPrint('등반 기록 저장 실패: $e');
@@ -1065,6 +1144,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       );
 
       // GPS 경로 저장
+      debugPrint('스탬프 경로 저장 시도: stampId=$stampId, positions=${_trackPositions.length}');
       if (stampId != null && _trackPositions.isNotEmpty) {
         try {
           await _hikingRouteService.saveRoute(
@@ -1073,9 +1153,12 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
             positions: _trackPositions,
             photoUrls: photoUrls.isNotEmpty ? photoUrls : null,
           );
+          debugPrint('스탬프 경로 저장 성공!');
         } catch (e) {
           debugPrint('경로 저장 실패: $e');
         }
+      } else {
+        debugPrint('스탬프 경로 저장 건너뜀: stampId=$stampId, positions=${_trackPositions.length}');
       }
 
       if (mounted) {
@@ -1147,13 +1230,18 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
         ),
         actions: [
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               final memo = memoController.text.trim();
               if (memo.isNotEmpty) {
                 _saveMemo(memo);
               }
-              // 스탬프 목록 새로고침
-              context.read<StampProvider>().loadStamps();
+              // 스탬프 + 뱃지 새로고침 완료 후 화면 닫기
+              final authProvider = context.read<AuthProvider>();
+              await context.read<StampProvider>().loadStamps();
+              if (authProvider.userId != null) {
+                await context.read<BadgeProvider>().loadUserBadges(authProvider.userId!);
+              }
+              if (!context.mounted) return;
               Navigator.pop(context);
               Navigator.pop(context);
             },
@@ -2427,6 +2515,9 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
           // 시설물 목록 패널
           if (_currentFacilities.isNotEmpty) _buildFacilityListPanel(),
 
+          // 내 위치 버튼
+          _buildMyLocationButton(),
+
           // 카메라 버튼 (등반 중일 때만)
           if (_isHiking && !_isCompleted) _buildCameraButton(),
 
@@ -2506,13 +2597,23 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
                         ),
                       );
                     },
-                    child: Tooltip(
-                      message: '오름 상세정보',
-                      child: Icon(
-                        Icons.info_outline,
-                        color: AppColors.textSecondary,
-                        size: 22,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: AppColors.textSecondary,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '상세정보',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -2529,13 +2630,23 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
                         ),
                       );
                     },
-                    child: Tooltip(
-                      message: '정보 오류 신고',
-                      child: Icon(
-                        Icons.report_problem_outlined,
-                        color: AppColors.textSecondary,
-                        size: 22,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.report_problem_outlined,
+                          color: AppColors.textSecondary,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '신고',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -2676,10 +2787,50 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   }
 
   // 카메라 버튼
+  Widget _buildMyLocationButton() {
+    return Positioned(
+      right: 16,
+      top: MediaQuery.of(context).padding.top + 140,
+      child: GestureDetector(
+        onTap: () async {
+          final position = await _mapService.getCurrentPosition();
+          if (position != null && mounted) {
+            setState(() {
+              _currentPosition = position;
+            });
+            _updateMarkers();
+            _mapController?.setCenter(
+              LatLng(position.latitude, position.longitude),
+            );
+          }
+        },
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.my_location,
+            color: _currentPosition != null ? AppColors.primary : Colors.grey,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCameraButton() {
     return Positioned(
       right: 16,
-      top: MediaQuery.of(context).padding.top + 200,
+      top: MediaQuery.of(context).padding.top + 200, // 내 위치 버튼(140) 아래
       child: FloatingActionButton(
         heroTag: 'camera',
         backgroundColor: Colors.white,
@@ -2691,6 +2842,22 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
 
   // 사진 촬영
   Future<void> _takePhoto() async {
+    final status = await Permission.camera.request();
+    if (!status.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('카메라 권한이 필요합니다. 설정에서 권한을 허용해주세요.'),
+            action: SnackBarAction(
+              label: '설정',
+              onPressed: () => openAppSettings(),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     try {
       final XFile? photo = await _imagePicker.pickImage(
         source: ImageSource.camera,
@@ -2702,6 +2869,12 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       if (photo != null) {
         setState(() {
           _hikingPhotos.add(File(photo.path));
+          // 촬영 위치 저장
+          if (_currentPosition != null) {
+            _hikingPhotoLocations.add(LatLng(_currentPosition!.latitude, _currentPosition!.longitude));
+          } else {
+            _hikingPhotoLocations.add(LatLng(0, 0));
+          }
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -3121,7 +3294,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     final hasStamp = context.watch<StampProvider>().hasStamp(widget.oreum.id);
 
     return GestureDetector(
-      onTap: hasStamp ? null : _verifyStamp,
+      onTap: _verifyStamp,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
@@ -3143,7 +3316,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
             ),
             const SizedBox(width: 8),
             Text(
-              hasStamp ? '스탬프 획득 완료!' : '스탬프 인증하기',
+              hasStamp ? '스탬프 획득하기' : '스탬프 인증하기',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 15,

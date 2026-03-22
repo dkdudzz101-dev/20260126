@@ -176,20 +176,10 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(
         children: [
-          // 1행: 인증 필터 + 정렬
+          // 1행: 정렬
           Row(
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              // 인증 필터
-              ..._buildChipGroup(
-                ['전체', '인증', '미인증'],
-                _stampFilter,
-                (val) {
-                  setState(() => _stampFilter = val);
-                  _filterOreums();
-                },
-              ),
-              const Spacer(),
-              // 정렬 드롭다운
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
@@ -223,9 +213,23 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          // 2행: 난이도 + 등산로 상태 (드롭다운 칩)
+          // 2행: 인증 + 난이도 + 등산로 상태
           Row(
             children: [
+              _buildDropdownChip(
+                label: '인증',
+                value: _stampFilter == '전체' ? null : _stampFilter,
+                items: ['인증', '미인증'],
+                colorMap: {
+                  '인증': Colors.green,
+                  '미인증': Colors.orange,
+                },
+                onChanged: (val) {
+                  setState(() => _stampFilter = val ?? '전체');
+                  _filterOreums();
+                },
+              ),
+              const SizedBox(width: 8),
               _buildDropdownChip(
                 label: '난이도',
                 value: _selectedDifficulty,
