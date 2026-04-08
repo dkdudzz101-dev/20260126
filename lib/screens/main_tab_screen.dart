@@ -17,6 +17,7 @@ import '../theme/app_colors.dart';
 import '../providers/auth_provider.dart';
 import '../providers/stamp_provider.dart';
 import '../services/pedometer_service.dart';
+import '../widgets/hiking_mini_bar.dart';
 
 class MainTabScreen extends StatefulWidget {
   const MainTabScreen({super.key});
@@ -106,15 +107,22 @@ class _MainTabScreenState extends State<MainTabScreen> {
       },
       child: Scaffold(
         key: _scaffoldKey,
-        body: IndexedStack(
-        index: _currentIndex,
-        children: _screens.map((screen) {
-          if (screen is HomeScreen) {
-            return HomeScreen(onMenuTap: openDrawer);
-          }
-          return screen;
-        }).toList(),
-      ),
+        body: Column(
+          children: [
+            Expanded(
+              child: IndexedStack(
+                index: _currentIndex,
+                children: _screens.map((screen) {
+                  if (screen is HomeScreen) {
+                    return HomeScreen(onMenuTap: openDrawer);
+                  }
+                  return screen;
+                }).toList(),
+              ),
+            ),
+            const HikingMiniBar(),
+          ],
+        ),
       endDrawer: _buildDrawer(),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(

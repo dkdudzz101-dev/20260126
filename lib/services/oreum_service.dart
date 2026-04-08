@@ -92,38 +92,15 @@ class OreumService {
         .toList();
   }
 
-  // 테마별 오름 가져오기 (oreum_themes 매핑 테이블 사용)
+  // 테마별 오름 가져오기 (v_oreum_themes 뷰 사용 - 단일 쿼리)
   Future<List<OreumModel>> getOreumsByTheme(String themeKey) async {
-    // 1. themes 테이블에서 theme_id 가져오기
-    final themeResponse = await _client
-        .from('themes')
-        .select('id')
-        .eq('key', themeKey)
-        .maybeSingle();
-
-    if (themeResponse == null) return [];
-    final themeId = themeResponse['id'] as int;
-
-    // 2. oreum_themes에서 해당 테마의 oreum_id 목록 가져오기
-    final mappingResponse = await _client
-        .from('oreum_themes')
-        .select('oreum_id')
-        .eq('theme_id', themeId);
-
-    final oreumIds = (mappingResponse as List)
-        .map((row) => row['oreum_id'].toString())
-        .toList();
-
-    if (oreumIds.isEmpty) return [];
-
-    // 3. oreums 테이블에서 해당 오름들 가져오기
-    final oreumsResponse = await _client
-        .from('oreums')
+    final response = await _client
+        .from('v_oreum_themes')
         .select()
-        .inFilter('id', oreumIds)
+        .eq('theme_key', themeKey)
         .order('name');
 
-    return (oreumsResponse as List)
+    return (response as List)
         .map((json) => OreumModel.fromJson(json))
         .toList();
   }
@@ -183,35 +160,25 @@ class OreumService {
 
   // 공식 이미지 병렬 확인
   Future<List<String>> _getOfficialImages(String oreumId) async {
-    final List<String> images = [];
+    try {
+      final files = await _client.storage
+          .from('oreum-data')
+          .list(path: '$oreumId/gallery');
 
-    // 1~20번 이미지 URL 생성
-    final urls = List.generate(20, (i) => _client.storage
-        .from('oreum-data')
-        .getPublicUrl('$oreumId/gallery/${i + 1}.jpg'));
+      final imageFiles = files
+          .where((f) => f.name.endsWith('.jpg') || f.name.endsWith('.png'))
+          .toList()
+        ..sort((a, b) => a.name.compareTo(b.name));
 
-    // 병렬로 HEAD 요청
-    final futures = urls.map((url) async {
-      try {
-        final response = await http.head(Uri.parse(url)).timeout(
-          const Duration(seconds: 3),
-        );
-        return response.statusCode == 200 ? url : null;
-      } catch (e) {
-        return null;
-      }
-    });
-
-    final results = await Future.wait(futures);
-
-    // null이 아닌 것만 순서대로 추가
-    for (var url in results) {
-      if (url != null) {
-        images.add(url);
-      }
+      return imageFiles
+          .map((f) => _client.storage
+              .from('oreum-data')
+              .getPublicUrl('$oreumId/gallery/${f.name}'))
+          .toList();
+    } catch (e) {
+      print('Official images error: $e');
+      return [];
     }
-
-    return images;
   }
 
   // 커뮤니티 이미지 가져오기

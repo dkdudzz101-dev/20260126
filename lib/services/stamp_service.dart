@@ -138,6 +138,12 @@ class StampService {
     return logId;
   }
 
+  // 등반 기록 삭제 (hiking_routes → hiking_logs 순서)
+  Future<void> deleteHikingLog(String logId) async {
+    await _client.from('hiking_routes').delete().eq('hiking_log_id', logId);
+    await _client.from('hiking_logs').delete().eq('id', logId);
+  }
+
   // 일반 운동 기록 저장 (오름 없이)
   Future<String?> recordExerciseLog({
     double? distanceWalked,
@@ -198,6 +204,23 @@ class StampService {
       }).eq('id', userId);
     } catch (e) {
       // 에러 무시
+    }
+  }
+
+  // 사용자 스탬프 요약 (RPC 단일 호출로 stamps, hiking_logs, certified IDs, distance, steps 모두 가져오기)
+  Future<Map<String, dynamic>?> getUserStampSummary() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return null;
+
+    try {
+      final response = await _client.rpc('get_user_stamp_summary', params: {
+        'p_user_id': userId,
+      });
+
+      if (response == null) return null;
+      return response as Map<String, dynamic>;
+    } catch (e) {
+      return null;
     }
   }
 

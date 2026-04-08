@@ -10,6 +10,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/stamp_provider.dart';
 import '../../models/oreum_model.dart';
 import '../../services/map_service.dart';
+import '../../services/oreum_service.dart';
 import '../../services/weather_service.dart';
 import '../../services/trail_service.dart';
 import '../oreum/oreum_detail_screen.dart';
@@ -49,6 +50,10 @@ class _MapScreenState extends State<MapScreen> {
   int _certFilter = 0;
   // 난이도 필터: null=전체, '쉬움', '보통', '어려움'
   String? _difficultyFilter;
+  // 테마 필터: null=전체
+  String? _selectedThemeKey;
+  String? _selectedThemeName;
+  Set<String> _themeOreumIds = {}; // 테마 필터링된 오름 ID 목록
 
   // 시설물 팝업용
   FacilityPoint? _selectedFacility;
@@ -244,6 +249,11 @@ class _MapScreenState extends State<MapScreen> {
       oreums = oreums.where((o) => o.difficulty == _difficultyFilter).toList();
     }
 
+    // 테마 필터
+    if (_selectedThemeKey != null && _themeOreumIds.isNotEmpty) {
+      oreums = oreums.where((o) => _themeOreumIds.contains(o.id)).toList();
+    }
+
     final markers = <Marker>[];
     final badges = <CustomOverlay>{};
 
@@ -303,6 +313,10 @@ class _MapScreenState extends State<MapScreen> {
         _mapController!.addCustomOverlay(customOverlays: badges.toList());
       }
     }
+
+    debugPrint('_updateClusterer: 필터 후 ${oreums.length}개 오름, ${markers.length}개 마커'
+        ' (테마=${_selectedThemeKey}, 테마ID=${_themeOreumIds.length}개'
+        ', 난이도=$_difficultyFilter, 찜=$_showOnlyBookmarked)');
 
     setState(() {
       _badgeOverlays = badges;
@@ -415,6 +429,130 @@ class _MapScreenState extends State<MapScreen> {
         ),
       );
     }
+  }
+
+  void _showThemeFilterDialog() {
+    const themes = [
+      {'key': 'sunrise', 'name': '일출명소', 'icon': Icons.wb_sunny, 'color': Color(0xFFFF7043)},
+      {'key': 'sunset', 'name': '일몰명소', 'icon': Icons.nights_stay, 'color': Color(0xFF5C6BC0)},
+      {'key': 'famous', 'name': '대표명소', 'icon': Icons.star, 'color': Color(0xFFFFB300)},
+      {'key': 'scenic', 'name': '전망좋은', 'icon': Icons.landscape, 'color': Color(0xFF2196F3)},
+      {'key': 'forest', 'name': '숲속힐링', 'icon': Icons.forest, 'color': Color(0xFF4CAF50)},
+      {'key': 'family', 'name': '가족추천', 'icon': Icons.family_restroom, 'color': Color(0xFF9C27B0)},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('테마 필터', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+            if (_selectedThemeKey != null)
+              ListTile(
+                leading: const Icon(Icons.clear),
+                title: const Text('전체 보기'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _clearThemeFilter();
+                },
+              ),
+            ...themes.map((theme) {
+              final key = theme['key'] as String;
+              final name = theme['name'] as String;
+              final icon = theme['icon'] as IconData;
+              final color = theme['color'] as Color;
+              final isSelected = _selectedThemeKey == key;
+              return ListTile(
+                leading: Icon(icon, color: color),
+                title: Text(name),
+                trailing: isSelected ? const Icon(Icons.check, color: AppColors.primary) : null,
+                selected: isSelected,
+                onTap: () {
+                  Navigator.pop(context);
+                  _applyThemeFilter(key, name);
+                },
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _applyThemeFilter(String themeKey, String themeName) async {
+    try {
+      final themeOreums = await OreumService().getOreumsByTheme(themeKey);
+
+      if (!mounted) return;
+
+      final ids = themeOreums.map((o) => o.id).toSet();
+      debugPrint('테마 필터 [$themeName]: ${ids.length}개 오름 매칭');
+
+      if (ids.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$themeName 테마에 해당하는 오름이 없습니다'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+
+      setState(() {
+        _selectedThemeKey = themeKey;
+        _selectedThemeName = themeName;
+        _themeOreumIds = ids;
+      });
+
+      _updateClusterer();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('테마: $themeName (${ids.length}개)'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    } catch (e) {
+      debugPrint('테마 필터 오류: $e');
+      if (!mounted) return;
+      // 에러 시 필터 해제
+      setState(() {
+        _selectedThemeKey = null;
+        _selectedThemeName = null;
+        _themeOreumIds = {};
+      });
+      _updateClusterer();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('테마 필터 적용에 실패했습니다'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _clearThemeFilter() {
+    setState(() {
+      _selectedThemeKey = null;
+      _selectedThemeName = null;
+      _themeOreumIds = {};
+    });
+    _updateClusterer();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('모든 오름을 표시합니다'),
+        duration: Duration(seconds: 1),
+      ),
+    );
   }
 
   bool _showLoginRequiredDialog() {
@@ -1421,7 +1559,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
           const SizedBox(height: 8),
           _buildMapButton(
-            icon: _showOnlyBookmarked ? Icons.bookmark : Icons.bookmark_outline,
+            icon: _showOnlyBookmarked ? Icons.favorite : Icons.favorite_border,
             label: '찜',
             isActive: _showOnlyBookmarked,
             onTap: _toggleBookmarkFilter,
@@ -1432,6 +1570,13 @@ class _MapScreenState extends State<MapScreen> {
             label: _difficultyFilter ?? '난이도',
             isActive: _difficultyFilter != null,
             onTap: _toggleDifficultyFilter,
+          ),
+          const SizedBox(height: 8),
+          _buildMapButton(
+            icon: Icons.palette_outlined,
+            label: _selectedThemeName ?? '테마',
+            isActive: _selectedThemeKey != null,
+            onTap: _showThemeFilterDialog,
           ),
           const SizedBox(height: 8),
           _buildMapButton(
@@ -1675,6 +1820,11 @@ class _MapScreenState extends State<MapScreen> {
       oreums = oreums.where((o) => o.difficulty == _difficultyFilter).toList();
     }
 
+    // 테마 필터
+    if (_selectedThemeKey != null && _themeOreumIds.isNotEmpty) {
+      oreums = oreums.where((o) => _themeOreumIds.contains(o.id)).toList();
+    }
+
     if (oreums.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(16),
@@ -1729,7 +1879,7 @@ class _MapScreenState extends State<MapScreen> {
                 style: const TextStyle(fontSize: 12, color: AppColors.textHint),
               ),
               trailing: isBookmarked
-                  ? const Icon(Icons.bookmark, size: 16, color: AppColors.primary)
+                  ? const Icon(Icons.favorite, size: 16, color: Colors.red)
                   : null,
               onTap: () {
                 final lat = oreum.summitLat ?? oreum.startLat;

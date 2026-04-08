@@ -782,8 +782,23 @@ class _CommunityScreenState extends State<CommunityScreen> {
 // 글쓰기 시트
 class WritePostSheet extends StatefulWidget {
   final Function(String content, String? oreumId, String? oreumName, String? category, List<String> imageUrls) onSubmit;
+  final String? initialOreumId;
+  final String? initialOreumName;
+  final String? initialCategory;
+  final String? initialContent;
+  final List<String>? initialImageUrls;
+  final bool isEditing;
 
-  const WritePostSheet({super.key, required this.onSubmit});
+  const WritePostSheet({
+    super.key,
+    required this.onSubmit,
+    this.initialOreumId,
+    this.initialOreumName,
+    this.initialCategory,
+    this.initialContent,
+    this.initialImageUrls,
+    this.isEditing = false,
+  });
 
   @override
   State<WritePostSheet> createState() => _WritePostSheetState();
@@ -800,6 +815,7 @@ class _WritePostSheetState extends State<WritePostSheet> {
   String _selectedCategory = '후기';
   String? _selectedDifficulty;
   final List<File> _selectedImages = [];
+  List<String> _existingImageUrls = []; // 수정 시 기존 이미지 URL
   bool _isUploading = false;
 
   // 카테고리 목록 (전체 제외)
@@ -809,6 +825,16 @@ class _WritePostSheetState extends State<WritePostSheet> {
   static const List<String> _difficulties = ['쉬움', '보통', '어려움'];
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.initialOreumId != null) _selectedOreumId = widget.initialOreumId;
+    if (widget.initialOreumName != null) _selectedOreumName = widget.initialOreumName;
+    if (widget.initialCategory != null) _selectedCategory = widget.initialCategory!;
+    if (widget.initialContent != null) _contentController.text = widget.initialContent!;
+    if (widget.initialImageUrls != null) _existingImageUrls = List.from(widget.initialImageUrls!);
+  }
+
+  @override
   void dispose() {
     _contentController.dispose();
     _timeController.dispose();
@@ -816,14 +842,15 @@ class _WritePostSheetState extends State<WritePostSheet> {
   }
 
   Future<void> _pickImage() async {
-    if (_selectedImages.length >= 5) {
+    final totalImages = _existingImageUrls.length + _selectedImages.length;
+    if (totalImages >= 5) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('이미지는 최대 5개까지 첨부할 수 있습니다')),
       );
       return;
     }
 
-    final remaining = 5 - _selectedImages.length;
+    final remaining = 5 - totalImages;
     final picked = await _imagePicker.pickMultiImage(
       maxWidth: 1200,
       maxHeight: 1200,
@@ -898,12 +925,15 @@ class _WritePostSheetState extends State<WritePostSheet> {
         }
       }
 
+      // 수정 모드에서는 기존 이미지 URL도 포함
+      final allImageUrls = [..._existingImageUrls, ...imageUrls];
+
       await widget.onSubmit(
         content,
         _selectedOreumId,
         _selectedOreumName,
         _selectedCategory,
-        imageUrls,
+        allImageUrls,
       );
     } finally {
       if (mounted) {
@@ -931,9 +961,9 @@ class _WritePostSheetState extends State<WritePostSheet> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    '새 글 작성',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  Text(
+                    widget.isEditing ? '글 수정' : '새 글 작성',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
@@ -1117,7 +1147,7 @@ class _WritePostSheetState extends State<WritePostSheet> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '(${_selectedImages.length}/5)',
+                    '(${_existingImageUrls.length + _selectedImages.length}/5)',
                     style: const TextStyle(fontSize: 12, color: AppColors.textHint),
                   ),
                 ],
@@ -1150,7 +1180,47 @@ class _WritePostSheetState extends State<WritePostSheet> {
                         ),
                       ),
                     ),
-                    // 선택된 이미지들
+                    // 기존 이미지 (수정 모드)
+                    ..._existingImageUrls.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final url = entry.value;
+                      return Stack(
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            margin: const EdgeInsets.only(right: 8),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              image: DecorationImage(
+                                image: NetworkImage(url),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 4,
+                            right: 12,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _existingImageUrls.removeAt(index);
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.close, size: 14, color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }),
+                    // 새로 선택된 이미지들
                     ..._selectedImages.asMap().entries.map((entry) {
                       final index = entry.key;
                       final file = entry.value;
@@ -1207,7 +1277,7 @@ class _WritePostSheetState extends State<WritePostSheet> {
                           width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
-                      : const Text('작성하기'),
+                      : Text(widget.isEditing ? '수정하기' : '작성하기'),
                 ),
               ),
               const SizedBox(height: 8),
@@ -1423,7 +1493,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) {
-              if (value == 'delete') {
+              if (value == 'edit') {
+                _showEditPostSheet();
+              } else if (value == 'delete') {
                 _showDeleteConfirmDialog();
               } else if (value == 'report') {
                 _showReportDialog(context, 'post', widget.post.id);
@@ -1436,7 +1508,17 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               }
             },
             itemBuilder: (context) => [
-              if (isMyPost)
+              if (isMyPost) ...[
+                const PopupMenuItem(
+                  value: 'edit',
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit_outlined, color: AppColors.textSecondary),
+                      SizedBox(width: 8),
+                      Text('수정하기'),
+                    ],
+                  ),
+                ),
                 const PopupMenuItem(
                   value: 'delete',
                   child: Row(
@@ -1447,6 +1529,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     ],
                   ),
                 ),
+              ],
               if (!isMyPost) ...[
                 const PopupMenuItem(
                   value: 'report',
@@ -1947,6 +2030,46 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     shareText += '\n\n#JEJUOREUM #오름탐험';
 
     Share.share(shareText);
+  }
+
+  void _showEditPostSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => WritePostSheet(
+        isEditing: true,
+        initialContent: widget.post.content,
+        initialOreumId: widget.post.oreumId,
+        initialOreumName: widget.post.oreumName,
+        initialCategory: widget.post.category,
+        initialImageUrls: widget.post.images,
+        onSubmit: (content, oreumId, oreumName, category, imageUrls) async {
+          final provider = context.read<CommunityProvider>();
+          final success = await provider.updatePost(
+            postId: widget.post.id,
+            content: content,
+            oreumId: oreumId,
+            oreumName: oreumName,
+            category: category,
+            images: imageUrls,
+          );
+          if (success && mounted) {
+            Navigator.pop(context); // 시트 닫기
+            Navigator.pop(context); // 상세 화면 닫기 후 목록으로
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('게시글이 수정되었습니다')),
+            );
+          } else if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('수정에 실패했습니다')),
+            );
+          }
+        },
+      ),
+    );
   }
 
   void _showDeleteConfirmDialog() {

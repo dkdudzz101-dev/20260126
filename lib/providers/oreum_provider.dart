@@ -20,6 +20,10 @@ class OreumProvider extends ChangeNotifier {
   String? _currentDifficultyFilter; // ignore: unused_field
   String? _currentCategoryFilter;
 
+  // Cache control
+  DateTime? _lastLoadTime;
+  static const Duration _cacheTtl = Duration(minutes: 10);
+
   List<OreumModel> get oreums => _oreums;
   String? get currentCategoryFilter => _currentCategoryFilter;
   List<OreumModel> get allOreums => _allOreums;
@@ -32,20 +36,28 @@ class OreumProvider extends ChangeNotifier {
   String? get error => _error;
 
   // 오름 목록 로드
-  Future<void> loadOreums() async {
+  Future<void> loadOreums({bool force = false}) async {
+    // Return early if cache is fresh and not forced
+    if (!force &&
+        _lastLoadTime != null &&
+        _allOreumsForStamp.isNotEmpty &&
+        DateTime.now().difference(_lastLoadTime!) < _cacheTtl) {
+      return;
+    }
+
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      // 활성화된 오름만 로드 (일반 표시용)
-      _allOreums = await _oreumService.getAllOreums();
-      _allOreums.sort((a, b) => a.name.compareTo(b.name));
-      _oreums = _allOreums;
-
-      // 정상인증용 전체 오름 로드 (비활성 포함)
+      // 전체 오름 1회 로드 (비활성 포함), 활성 오름은 클라이언트에서 필터링
       _allOreumsForStamp = await _oreumService.getAllOreumsIncludingInactive();
       _allOreumsForStamp.sort((a, b) => a.name.compareTo(b.name));
+
+      _allOreums = _allOreumsForStamp.where((o) => o.isActive).toList();
+      _oreums = _allOreums;
+
+      _lastLoadTime = DateTime.now();
     } catch (e) {
       _error = e.toString();
 

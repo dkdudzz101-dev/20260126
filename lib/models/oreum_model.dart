@@ -36,7 +36,7 @@ class OreumModel {
   final String? recommendedSeason;
   final String? imageSource; // 사진 출처
   final String? visitTip; // 방문팁
-  final String? trailStatus; // 'verified' (확인됨) / 'checking' (미확인)
+  final String? trailStatus; // 'verified' (정보 있음) / 'checking' (정보 없음)
   final DateTime? trailVerifiedAt; // 마지막 확인 시각
 
   OreumModel({

@@ -289,7 +289,7 @@ class _ExerciseScreenState extends State<ExerciseScreen> with WidgetsBindingObse
         }
 
         if (mounted) {
-          context.read<StampProvider>().loadStamps();
+          context.read<StampProvider>().loadStamps(force: true);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('운동 기록이 저장되었습니다'), backgroundColor: Colors.green),
           );

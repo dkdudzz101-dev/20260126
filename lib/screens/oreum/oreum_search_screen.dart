@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/oreum_provider.dart';
 import '../../providers/stamp_provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../models/oreum_model.dart';
 import '../../services/inquiry_service.dart';
 import '../../utils/login_guard.dart';
@@ -76,7 +77,12 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
     final stampProvider = context.read<StampProvider>();
     final query = _searchController.text.toLowerCase();
 
-    var list = oreumProvider.allOreumsForStamp.where((oreum) {
+    // 테마 필터가 적용된 경우 oreums(필터된 목록), 아니면 전체 목록 사용
+    final baseList = oreumProvider.currentCategoryFilter != null
+        ? oreumProvider.oreums
+        : oreumProvider.allOreumsForStamp;
+
+    var list = baseList.where((oreum) {
       // 검색어
       final matchesQuery = query.isEmpty ||
           oreum.name.toLowerCase().contains(query) ||
@@ -84,17 +90,22 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
 
       // 인증 필터
       final isStamped = stampProvider.hasStamp(oreum.id);
+      final isAnyCertified = stampProvider.isAnyCertified(oreum.id);
       final matchesStamp = _stampFilter == '전체' ||
-          (_stampFilter == '인증' && isStamped) ||
-          (_stampFilter == '미인증' && !isStamped);
+          (_stampFilter == '내 인증' && isStamped) ||
+          (_stampFilter == '내 미인증' && !isStamped) ||
+          (_stampFilter == '누군가 인증' && isAnyCertified) ||
+          (_stampFilter == '아무도 미인증' && !isAnyCertified);
 
       // 난이도
       final matchesDifficulty = _selectedDifficulty == null ||
           oreum.difficulty == _selectedDifficulty;
 
-      // 등산로 상태
+      // 등산로 정보 (geojson 유무 기준)
+      final hasTrailData = oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty;
       final matchesTrailStatus = _selectedTrailStatus == null ||
-          (oreum.trailStatus ?? 'checking') == _selectedTrailStatus;
+          (_selectedTrailStatus == 'verified' && hasTrailData) ||
+          (_selectedTrailStatus == 'checking' && !hasTrailData);
 
       return matchesQuery && matchesStamp && matchesDifficulty && matchesTrailStatus;
     }).toList();
@@ -219,10 +230,12 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
               _buildDropdownChip(
                 label: '인증',
                 value: _stampFilter == '전체' ? null : _stampFilter,
-                items: ['인증', '미인증'],
+                items: ['내 인증', '내 미인증', '누군가 인증', '아무도 미인증'],
                 colorMap: {
-                  '인증': Colors.green,
-                  '미인증': Colors.orange,
+                  '내 인증': Colors.green,
+                  '내 미인증': Colors.orange,
+                  '누군가 인증': Colors.blue,
+                  '아무도 미인증': Colors.grey,
                 },
                 onChanged: (val) {
                   setState(() => _stampFilter = val ?? '전체');
@@ -247,16 +260,16 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
               const SizedBox(width: 8),
               _buildDropdownChip(
                 label: '등산로',
-                value: _selectedTrailStatus == 'verified' ? '확인됨' : _selectedTrailStatus == 'checking' ? '미확인' : null,
-                items: ['확인됨', '미확인'],
+                value: _selectedTrailStatus == 'verified' ? '정보 있음' : _selectedTrailStatus == 'checking' ? '정보 없음' : null,
+                items: ['정보 있음', '정보 없음'],
                 colorMap: {
-                  '확인됨': Colors.green,
-                  '미확인': Colors.orange,
+                  '정보 있음': Colors.green,
+                  '정보 없음': Colors.orange,
                 },
                 onChanged: (val) {
                   setState(() {
-                    if (val == '확인됨') _selectedTrailStatus = 'verified';
-                    else if (val == '미확인') _selectedTrailStatus = 'checking';
+                    if (val == '정보 있음') _selectedTrailStatus = 'verified';
+                    else if (val == '정보 없음') _selectedTrailStatus = 'checking';
                     else _selectedTrailStatus = null;
                   });
                   _filterOreums();
@@ -399,23 +412,11 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
   }
 
   Widget _buildResultCount() {
-    final stampProvider = context.watch<StampProvider>();
-    final stampedCount = _filteredOreums.where((o) => stampProvider.hasStamp(o.id)).length;
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-      child: Row(
-        children: [
-          Text(
-            '${_filteredOreums.length}개',
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '(인증 $stampedCount개)',
-            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-          ),
-        ],
+      child: Text(
+        '${_filteredOreums.length}개',
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -625,11 +626,9 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
                       if (oreum.difficulty != null)
                         _buildBadge(oreum.difficulty!, _difficultyColor(oreum.difficulty!)),
                       _buildBadge(
-                        (oreum.trailStatus ?? 'checking') == 'verified' ? '확인됨' : '미확인',
-                        (oreum.trailStatus ?? 'checking') == 'verified' ? Colors.green : Colors.orange,
+                        (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty) ? '정보 있음' : '정보 없음',
+                        (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty) ? Colors.green : Colors.orange,
                       ),
-                      if (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty)
-                        _buildBadge('등산로', const Color(0xFF2E7D32)),
                       if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
                         _buildBadge(oreum.restriction!, const Color(0xFFB71C1C)),
                     ],
@@ -661,7 +660,7 @@ class _OreumSearchScreenState extends State<OreumSearchScreen> {
             if (isBookmarked)
               const Padding(
                 padding: EdgeInsets.only(right: 4),
-                child: Icon(Icons.star, color: Colors.amber, size: 18),
+                child: Icon(Icons.favorite, color: Colors.red, size: 18),
               ),
             const Icon(Icons.chevron_right, color: AppColors.textHint),
           ],

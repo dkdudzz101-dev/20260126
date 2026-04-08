@@ -19,6 +19,9 @@ class StampScreen extends StatefulWidget {
 
 class _StampScreenState extends State<StampScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  String _searchQuery = '';
+  int _stampFilter = 0; // 0=전체, 1=획득, 2=미획득
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -35,6 +38,7 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -387,7 +391,21 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
     final totalStampCount = stampProvider.stampCount;
 
     // 현재 선택된 탭의 오름 목록
-    final currentOreums = _tabController.index == 0 ? betaOreums : allOreums;
+    var currentOreums = _tabController.index == 0 ? betaOreums : allOreums;
+
+    // 검색 필터 적용
+    if (_searchQuery.isNotEmpty) {
+      currentOreums = currentOreums
+          .where((o) => o.name.toLowerCase().contains(_searchQuery.toLowerCase()))
+          .toList();
+    }
+
+    // 획득/미획득 필터 적용
+    if (_stampFilter == 1) {
+      currentOreums = currentOreums.where((o) => stampProvider.hasStamp(o.id)).toList();
+    } else if (_stampFilter == 2) {
+      currentOreums = currentOreums.where((o) => !stampProvider.hasStamp(o.id)).toList();
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -403,6 +421,33 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 12),
+        // 검색바
+        TextField(
+          controller: _searchController,
+          onChanged: (value) => setState(() => _searchQuery = value),
+          decoration: InputDecoration(
+            hintText: '오름 이름 검색',
+            hintStyle: const TextStyle(fontSize: 14, color: AppColors.textHint),
+            prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.textHint),
+            suffixIcon: _searchQuery.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, size: 18),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() => _searchQuery = '');
+                    },
+                  )
+                : null,
+            filled: true,
+            fillColor: AppColors.surface,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
         ),
         const SizedBox(height: 12),
         // 탭 버튼 (커스텀)
@@ -501,8 +546,35 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
+        // 획득 필터 버튼
+        Row(
+          children: [
+            _buildFilterChip('전체', 0),
+            const SizedBox(width: 8),
+            _buildFilterChip('획득', 1),
+            const SizedBox(width: 8),
+            _buildFilterChip('미획득', 2),
+            const Spacer(),
+            Text(
+              '${currentOreums.length}개',
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
         // 그리드 (TabBarView 대신 직접 표시)
+        if (currentOreums.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(40),
+            child: Center(
+              child: Text(
+                _searchQuery.isNotEmpty ? '검색 결과가 없습니다' : '해당하는 오름이 없습니다',
+                style: const TextStyle(color: AppColors.textSecondary),
+              ),
+            ),
+          )
+        else
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -761,6 +833,31 @@ class _StampScreenState extends State<StampScreen> with SingleTickerProviderStat
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String label, int value) {
+    final isSelected = _stampFilter == value;
+    return GestureDetector(
+      onTap: () => setState(() => _stampFilter = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary : AppColors.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : AppColors.border,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? Colors.white : AppColors.textSecondary,
+          ),
+        ),
       ),
     );
   }

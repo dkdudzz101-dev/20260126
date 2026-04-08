@@ -1,8 +1,12 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:kakao_map_plugin/kakao_map_plugin.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:kakao_map_plugin/kakao_map_plugin.dart';
+import 'package:gal/gal.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/stamp_provider.dart';
 import '../../services/hiking_route_service.dart';
@@ -18,8 +22,9 @@ class _KmPoint {
 
 class HikingDetailScreen extends StatefulWidget {
   final StampModel stamp;
+  final bool autoShare;
 
-  const HikingDetailScreen({super.key, required this.stamp});
+  const HikingDetailScreen({super.key, required this.stamp, this.autoShare = false});
 
   @override
   State<HikingDetailScreen> createState() => _HikingDetailScreenState();
@@ -27,11 +32,13 @@ class HikingDetailScreen extends StatefulWidget {
 
 class _HikingDetailScreenState extends State<HikingDetailScreen> {
   final HikingRouteService _routeService = HikingRouteService();
-  final ShareService _shareService = ShareService();
   List<Map<String, dynamic>>? _routeData;
   List<String>? _photoUrls;
   bool _isLoading = true;
   KakaoMapController? _mapController;
+
+  // 지도 캡처용 키
+  final GlobalKey _mapCaptureKey = GlobalKey();
 
   // 지도 확장 & km 선택
   bool _isMapExpanded = false;
@@ -71,6 +78,12 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
           _isLoading = false;
         });
         if (_routeData != null) _calculateKmPoints();
+        // autoShare 모드: 로드 완료 후 자동으로 꾸미기 시트 열기
+        if (widget.autoShare) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _shareRecord();
+          });
+        }
       }
     } catch (e) {
       debugPrint('경로 로드 실패: $e (stamp.id=${widget.stamp.id}, type=${widget.stamp.recordType})');
@@ -113,369 +126,519 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
 
   Future<void> _shareRecord() async {
     final stamp = widget.stamp;
-    final dateStr = '${stamp.stampedAt.year}.${stamp.stampedAt.month.toString().padLeft(2, '0')}.${stamp.stampedAt.day.toString().padLeft(2, '0')}';
+    final shareService = ShareService();
+    final dateStr = '${stamp.stampedAt.year}.${stamp.stampedAt.month.toString().padLeft(2, "0")}.${stamp.stampedAt.day.toString().padLeft(2, "0")}';
 
-    String? selectedPhotoUrl = (_photoUrls != null && _photoUrls!.isNotEmpty) ? _photoUrls!.first : null;
-    File? localPhoto; // 카메라/앨범에서 선택한 로컬 사진
-    final toggles = {
-      'date': true,
-      'distance': true,
-      'time': true,
-      'steps': true,
-      'calories': stamp.calories != null,
-      'altitude': stamp.elevationGain != null,
-    };
-    bool isSharing = false;
+    List<Map<String, double>>? routePts;
+    if (_routeData != null && _routeData!.length >= 2) {
+      routePts = _routeData!.map((p) => {
+        'lat': (p['lat'] as num).toDouble(),
+        'lng': (p['lng'] as num).toDouble(),
+      }).toList();
+    }
 
-    showModalBottomSheet(
+    String fmtTime(int m) => m >= 60 ? '${m ~/ 60}시간 ${m % 60}분' : '${m}분';
+
+    // 경로 숨기고 지도만 캡처 (배경으로 사용)
+    File? mapBgFile;
+    try {
+      // 경로/마커 숨기기
+      _mapController?.clearPolyline();
+      await Future.delayed(const Duration(milliseconds: 400));
+
+      final boundary = _mapCaptureKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary != null) {
+        final image = await boundary.toImage(pixelRatio: 2.0);
+        final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+        final pngBytes = byteData!.buffer.asUint8List();
+        final dir = await getTemporaryDirectory();
+        final path = '${dir.path}/map_bg_${DateTime.now().millisecondsSinceEpoch}.png';
+        await File(path).writeAsBytes(pngBytes);
+        mapBgFile = File(path);
+      }
+
+      // 경로 복원
+      if (routePts != null) {
+        final pts = _routeData!
+            .where((p) => p['lat'] != null && p['lng'] != null)
+            .map((p) => LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()))
+            .toList();
+        _mapController?.addPolyline(polylines: [
+          Polyline(
+            polylineId: 'route',
+            points: pts,
+            strokeColor: AppColors.primary,
+            strokeWidth: 4,
+          ),
+        ]);
+      }
+    } catch (e) {
+      debugPrint('Map capture error: $e');
+    }
+
+    // 지도 캡처 성공 → 경로 스티커 기본 추가(선택 상태), 실패 → 경로 스티커 기본 추가
+    final List<_StickerItem> stickers = routePts != null
+        ? [_StickerItem(kind: _StickerKind.route, dx: 0.05, dy: 0.05)]
+        : [];
+    int? selectedIdx = routePts != null ? 0 : null;
+    bool isCapturing = false;
+    String? selectedPhotoUrl = _photoUrls?.isNotEmpty == true ? _photoUrls!.first : null;
+    File? localPhoto = mapBgFile;
+    bool isProcessing = false;
+    final previewKey = GlobalKey();
+
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetContext, setModalState) {
-            // 선택된 항목들로 정보 문자열 생성
-            final infoParts = <String>[];
-            if (toggles['distance']!) infoParts.add(_formatDistance(stamp.distanceWalked));
-            if (toggles['time']!) infoParts.add(_formatDuration(stamp.timeTaken));
-            if (toggles['steps']!) infoParts.add(_formatSteps(stamp.steps));
-            if (toggles['calories']! && stamp.calories != null) infoParts.add('${stamp.calories}kcal');
-            if (toggles['altitude']! && stamp.elevationGain != null) infoParts.add('+${stamp.elevationGain!.toStringAsFixed(0)}m');
-            if (toggles['date']!) infoParts.add(dateStr);
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) {
 
-            return Container(
-              height: MediaQuery.of(sheetContext).size.height * 0.85,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: Column(
-                children: [
-                  // 핸들바
-                  Container(
-                    margin: const EdgeInsets.only(top: 12),
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
+          Widget buildStickerContent(_StickerItem s) {
+            switch (s.kind) {
+              case _StickerKind.route:
+                return SizedBox(
+                  width: 110, height: 110,
+                  child: CustomPaint(painter: _ShareRoutePainter(points: routePts!)),
+                );
+              case _StickerKind.stats:
+                final sc = s.isWhiteText ? Colors.white : Colors.black;
+                final shadow = Shadow(color: s.isWhiteText ? Colors.black54 : Colors.white54, blurRadius: 4);
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (stamp.distanceWalked != null)
+                      Text('${(stamp.distanceWalked! / 1000).toStringAsFixed(1)} km',
+                        style: TextStyle(color: sc, fontSize: 18, fontWeight: FontWeight.bold, shadows: [shadow])),
+                    if (stamp.timeTaken != null)
+                      Text(fmtTime(stamp.timeTaken!),
+                        style: TextStyle(color: sc, fontSize: 13, shadows: [shadow])),
+                    if (stamp.calories != null)
+                      Text('${stamp.calories} kcal',
+                        style: TextStyle(color: sc, fontSize: 13, shadows: [shadow])),
+                  ],
+                );
+              case _StickerKind.date:
+                final dc = s.isWhiteText ? Colors.white : Colors.black;
+                final dshadow = Shadow(color: s.isWhiteText ? Colors.black54 : Colors.white54, blurRadius: 4);
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(stamp.oreumName,
+                      style: TextStyle(color: dc, fontSize: 16, fontWeight: FontWeight.bold, shadows: [dshadow])),
+                    Text(dateStr,
+                      style: TextStyle(color: dc.withValues(alpha: 0.85), fontSize: 12, shadows: [dshadow])),
+                  ],
+                );
+              case _StickerKind.all:
+                return Container(
+                  width: 130,
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    '공유 카드 설정',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (routePts != null)
+                        SizedBox(
+                          width: 110, height: 80,
+                          child: CustomPaint(painter: _ShareRoutePainter(points: routePts)),
+                        ),
+                      const SizedBox(height: 6),
+                      Text(stamp.oreumName,
+                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                      Text(dateStr,
+                        style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                      if (stamp.distanceWalked != null)
+                        Text('${(stamp.distanceWalked! / 1000).toStringAsFixed(1)} km',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Column(
-                        children: [
-                          // 미리보기
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: SizedBox(
-                              width: double.infinity,
-                              height: 280,
-                              child: (localPhoto != null || selectedPhotoUrl != null)
-                                  ? Stack(
-                                      fit: StackFit.expand,
-                                      children: [
-                                        if (localPhoto != null)
-                                          Image.file(localPhoto!, fit: BoxFit.cover)
-                                        else
-                                          Image.network(selectedPhotoUrl!, fit: BoxFit.cover,
-                                            errorBuilder: (_, __, ___) => Container(
-                                              color: Colors.grey[300],
-                                              child: const Icon(Icons.broken_image, size: 48),
-                                            ),
-                                          ),
-                                        Container(
-                                          decoration: BoxDecoration(
-                                            gradient: LinearGradient(
-                                              begin: Alignment.topCenter,
-                                              end: Alignment.bottomCenter,
-                                              colors: [
-                                                Colors.black.withValues(alpha: 0.15),
-                                                Colors.transparent,
-                                                Colors.black.withValues(alpha: 0.7),
-                                              ],
-                                              stops: const [0.0, 0.3, 1.0],
-                                            ),
-                                          ),
-                                        ),
-                                        // 워터마크
-                                        Positioned(
-                                          top: 12, right: 12,
-                                          child: Text('JEJUOREUM', style: TextStyle(
-                                            color: Colors.white.withValues(alpha: 0.85),
-                                            fontSize: 12, fontWeight: FontWeight.w700,
-                                            letterSpacing: 2.0,
-                                          )),
-                                        ),
-                                        Positioned(
-                                          bottom: 0, left: 0, right: 0,
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(16),
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(stamp.oreumName, style: const TextStyle(
-                                                  color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold,
-                                                )),
-                                                if (infoParts.isNotEmpty) ...[
-                                                  const SizedBox(height: 4),
-                                                  Text(infoParts.join('  |  '), style: TextStyle(
-                                                    color: Colors.white.withValues(alpha: 0.85), fontSize: 11,
-                                                  )),
-                                                ],
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  : Container(
-                                      color: Colors.grey[200],
-                                      child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          Icon(Icons.terrain, size: 48, color: Colors.grey[400]),
-                                          const SizedBox(height: 8),
-                                          Text(stamp.oreumName, style: TextStyle(
-                                            fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey[600],
-                                          )),
-                                          if (infoParts.isNotEmpty) ...[
-                                            const SizedBox(height: 4),
-                                            Text(infoParts.join('  |  '), style: TextStyle(
-                                              fontSize: 11, color: Colors.grey[500],
-                                            )),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          // 카메라/앨범/기존사진 선택 버튼
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () async {
-                                    final picked = await ImagePicker().pickImage(source: ImageSource.camera);
-                                    if (picked != null) {
-                                      setModalState(() {
-                                        localPhoto = File(picked.path);
-                                        selectedPhotoUrl = null;
-                                      });
-                                    }
-                                  },
-                                  icon: const Icon(Icons.camera_alt, size: 18),
-                                  label: const Text('카메라'),
-                                  style: OutlinedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () async {
-                                    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-                                    if (picked != null) {
-                                      setModalState(() {
-                                        localPhoto = File(picked.path);
-                                        selectedPhotoUrl = null;
-                                      });
-                                    }
-                                  },
-                                  icon: const Icon(Icons.photo_library, size: 18),
-                                  label: const Text('앨범'),
-                                  style: OutlinedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                  ),
-                                ),
-                              ),
-                              if (localPhoto != null && (_photoUrls != null && _photoUrls!.isNotEmpty)) ...[
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: () {
-                                      setModalState(() {
-                                        localPhoto = null;
-                                        selectedPhotoUrl = _photoUrls!.first;
-                                      });
-                                    },
-                                    icon: const Icon(Icons.restore, size: 18),
-                                    label: const Text('원래 사진'),
-                                    style: OutlinedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(vertical: 10),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          // 기존 사진 썸네일 (여러 장일 때)
-                          if (localPhoto == null && _photoUrls != null && _photoUrls!.length > 1) ...[
-                            SizedBox(
-                              height: 64,
-                              child: ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                itemCount: _photoUrls!.length,
-                                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                                itemBuilder: (context, index) {
-                                  final isSelected = selectedPhotoUrl == _photoUrls![index];
-                                  return GestureDetector(
-                                    onTap: () {
-                                      setModalState(() => selectedPhotoUrl = _photoUrls![index]);
-                                    },
-                                    child: Container(
-                                      width: 64,
-                                      height: 64,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(
-                                          color: isSelected ? AppColors.primary : Colors.transparent,
-                                          width: 2,
-                                        ),
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: Image.network(_photoUrls![index], fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) => Container(color: Colors.grey[300]),
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
+                );
+            }
+          }
+
+          Widget buildStickerWidget(int idx, _StickerItem s, double pw, double ph) {
+            final isSelected = !isCapturing && selectedIdx == idx;
+            return Positioned(
+              left: s.dx * pw,
+              top: s.dy * ph,
+              child: GestureDetector(
+                onTap: () => setSheet(() => selectedIdx = idx),
+                onScaleStart: (d) { s.gestureBaseScale = s.scale; },
+                onScaleUpdate: (d) => setSheet(() {
+                  if (d.pointerCount >= 2) {
+                    s.scale = (s.gestureBaseScale * d.scale).clamp(0.4, 4.0);
+                  } else {
+                    s.dx = (s.dx + d.focalPointDelta.dx / pw).clamp(0.0, 0.9);
+                    s.dy = (s.dy + d.focalPointDelta.dy / ph).clamp(0.0, 0.9);
+                  }
+                }),
+                child: Transform.scale(
+                  scale: s.scale,
+                  alignment: Alignment.topLeft,
+                  child: Stack(
+                    children: [
+                      buildStickerContent(s),
+                      if (isSelected)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.white, width: 2),
+                                borderRadius: BorderRadius.circular(8),
                               ),
                             ),
-                            const SizedBox(height: 8),
-                          ],
-                          // 토글 옵션
-                          _buildToggle('날짜', Icons.calendar_today, toggles['date']!, (v) {
-                            setModalState(() => toggles['date'] = v);
-                          }),
-                          _buildToggle('거리', Icons.straighten, toggles['distance']!, (v) {
-                            setModalState(() => toggles['distance'] = v);
-                          }),
-                          _buildToggle('시간', Icons.schedule, toggles['time']!, (v) {
-                            setModalState(() => toggles['time'] = v);
-                          }),
-                          _buildToggle('걸음수', Icons.directions_walk, toggles['steps']!, (v) {
-                            setModalState(() => toggles['steps'] = v);
-                          }),
-                          if (stamp.calories != null)
-                            _buildToggle('칼로리', Icons.local_fire_department, toggles['calories']!, (v) {
-                              setModalState(() => toggles['calories'] = v);
-                            }),
-                          if (stamp.elevationGain != null)
-                            _buildToggle('고도', Icons.trending_up, toggles['altitude']!, (v) {
-                              setModalState(() => toggles['altitude'] = v);
-                            }),
-                          const SizedBox(height: 16),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // 공유하기 버튼
-                  Padding(
-                    padding: EdgeInsets.only(
-                      left: 20, right: 20, bottom: MediaQuery.of(sheetContext).padding.bottom + 16, top: 8,
-                    ),
-                    child: SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: ElevatedButton(
-                        onPressed: isSharing ? null : () async {
-                          setModalState(() => isSharing = true);
-                          try {
-                            // 경로 좌표 변환
-                            List<Map<String, double>>? routePts;
-                            if (_routeData != null && _routeData!.length >= 2) {
-                              routePts = _routeData!.map((p) => {
-                                'lat': (p['lat'] as num).toDouble(),
-                                'lng': (p['lng'] as num).toDouble(),
-                              }).toList();
-                            }
-                            final shareCard = HikingShareCard(
-                              oreumName: stamp.oreumName,
-                              date: toggles['date']! ? dateStr : null,
-                              distanceKm: toggles['distance']! ? (stamp.distanceWalked ?? 0) / 1000 : null,
-                              durationMinutes: toggles['time']! ? (stamp.timeTaken ?? 0) : null,
-                              steps: toggles['steps']! ? (stamp.steps ?? 0) : null,
-                              photoUrl: localPhoto == null ? selectedPhotoUrl : null,
-                              localPhotoFile: localPhoto,
-                              calories: toggles['calories']! ? stamp.calories : null,
-                              elevationGain: toggles['altitude']! ? stamp.elevationGain : null,
-                              routePoints: routePts,
-                            );
-                            final imagePath = await _shareService.captureWidget(widget: shareCard);
-
-                            if (!mounted) return;
-                            Navigator.pop(sheetContext);
-
-                            await _shareService.shareImage(
-                              imagePath: imagePath,
-                              oreumName: stamp.oreumName,
-                              text: '${stamp.oreumName} 등반 완료!\n#JEJUOREUM #등산',
-                            );
-                          } catch (e) {
-                            debugPrint('에러: $e');
-                            setModalState(() => isSharing = false);
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('공유에 실패했습니다.')),
-                              );
-                            }
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        child: isSharing
-                            ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                            : const Text('공유하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
+
+          Future<String> capturePreview() async {
+            setSheet(() { isCapturing = true; selectedIdx = null; });
+            await Future.delayed(const Duration(milliseconds: 80));
+            try {
+              final boundary = previewKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+              final image = await boundary.toImage(pixelRatio: 3.0);
+              final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+              final pngBytes = byteData!.buffer.asUint8List();
+              final directory = await getTemporaryDirectory();
+              final path = '${directory.path}/jeju_oreum_${DateTime.now().millisecondsSinceEpoch}.png';
+              await File(path).writeAsBytes(pngBytes);
+              return path;
+            } finally {
+              setSheet(() => isCapturing = false);
+            }
+          }
+
+          return Container(
+            height: MediaQuery.of(sheetCtx).size.height * 0.88,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 10),
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+                ),
+                const SizedBox(height: 10),
+                const Text('이미지 편집', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: LayoutBuilder(
+                        builder: (ctx, constraints) {
+                          final pw = constraints.maxWidth;
+                          final ph = constraints.maxHeight;
+                          return GestureDetector(
+                            onTap: () => setSheet(() => selectedIdx = null),
+                            child: RepaintBoundary(
+                              key: previewKey,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  if (localPhoto != null)
+                                    Image.file(localPhoto!, fit: BoxFit.cover)
+                                  else if (selectedPhotoUrl != null)
+                                    Image.network(selectedPhotoUrl!, fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Container(color: const Color(0xFF1A1A2E)))
+                                  else
+                                    Container(color: const Color(0xFF1A1A2E)),
+                                  Positioned(
+                                    top: 10, right: 12,
+                                    child: Text('JEJUOREUM', style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.88),
+                                      fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 2,
+                                    )),
+                                  ),
+                                  ...stickers.asMap().entries.map(
+                                    (e) => buildStickerWidget(e.key, e.value, pw, ph),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+                ),
+                // 선택된 스티커 컨트롤 툴바
+                if (selectedIdx != null && !isCapturing && selectedIdx! < stickers.length)
+                  Container(
+                    margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[900],
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        // 삭제
+                        GestureDetector(
+                          onTap: () => setSheet(() {
+                            stickers.removeAt(selectedIdx!);
+                            selectedIdx = null;
+                          }),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.delete_outline, color: Colors.redAccent, size: 26),
+                              SizedBox(height: 2),
+                              Text('삭제', style: TextStyle(fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
+                        ),
+                        // 글자색 토글 (기록/날짜만)
+                        if (stickers[selectedIdx!].kind == _StickerKind.stats || stickers[selectedIdx!].kind == _StickerKind.date)
+                          GestureDetector(
+                            onTap: () => setSheet(() => stickers[selectedIdx!].isWhiteText = !stickers[selectedIdx!].isWhiteText),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                Container(
+                                  width: 26, height: 26,
+                                  decoration: BoxDecoration(
+                                    color: stickers[selectedIdx!].isWhiteText ? Colors.white : Colors.black,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white54, width: 1.5),
+                                  ),
+                                  child: Center(child: Text('A', style: TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.bold,
+                                    color: stickers[selectedIdx!].isWhiteText ? Colors.black : Colors.white,
+                                  ))),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(stickers[selectedIdx!].isWhiteText ? '흰색' : '검정',
+                                  style: const TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.w600)),
+                              ]),
+                            ),
+                          ),
+                        // 축소
+                        GestureDetector(
+                          onTap: () => setSheet(() {
+                            stickers[selectedIdx!].scale = (stickers[selectedIdx!].scale - 0.15).clamp(0.4, 4.0);
+                          }),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.remove_circle_outline, color: Colors.white70, size: 26),
+                              SizedBox(height: 2),
+                              Text('축소', style: TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
+                        ),
+                        // 확대
+                        GestureDetector(
+                          onTap: () => setSheet(() {
+                            stickers[selectedIdx!].scale = (stickers[selectedIdx!].scale + 0.15).clamp(0.4, 4.0);
+                          }),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.add_circle_outline, color: Colors.white70, size: 26),
+                              SizedBox(height: 2),
+                              Text('확대', style: TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
+                        ),
+                        // 완료
+                        GestureDetector(
+                          onTap: () => setSheet(() => selectedIdx = null),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 26),
+                              SizedBox(height: 2),
+                              Text('완료', style: TextStyle(fontSize: 11, color: Colors.greenAccent, fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final p = await ImagePicker().pickImage(source: ImageSource.gallery);
+                            if (p != null) setSheet(() { localPhoto = File(p.path); selectedPhotoUrl = null; });
+                          },
+                          icon: const Icon(Icons.photo_library_outlined, size: 18),
+                          label: const Text('갤러리'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final p = await ImagePicker().pickImage(source: ImageSource.camera);
+                            if (p != null) setSheet(() { localPhoto = File(p.path); selectedPhotoUrl = null; });
+                          },
+                          icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                          label: const Text('카메라'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('스티커 추가', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          _stickerBtn('경로', Icons.route,
+                            enabled: routePts != null,
+                            onTap: () => setSheet(() { stickers.add(_StickerItem(kind: _StickerKind.route)); selectedIdx = stickers.length - 1; }),
+                          ),
+                          const SizedBox(width: 8),
+                          _stickerBtn('기록', Icons.straighten,
+                            onTap: () => setSheet(() { stickers.add(_StickerItem(kind: _StickerKind.stats)); selectedIdx = stickers.length - 1; }),
+                          ),
+                          const SizedBox(width: 8),
+                          _stickerBtn('날짜', Icons.calendar_today,
+                            onTap: () => setSheet(() { stickers.add(_StickerItem(kind: _StickerKind.date)); selectedIdx = stickers.length - 1; }),
+                          ),
+                          const SizedBox(width: 8),
+                          _stickerBtn('전체', Icons.layers,
+                            enabled: routePts != null,
+                            onTap: () => setSheet(() { stickers.add(_StickerItem(kind: _StickerKind.all)); selectedIdx = stickers.length - 1; }),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, MediaQuery.of(sheetCtx).padding.bottom + 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 50,
+                          child: ElevatedButton.icon(
+                            onPressed: isProcessing ? null : () async {
+                              setSheet(() => isProcessing = true);
+                              try {
+                                final imagePath = await capturePreview();
+                                if (!mounted) return;
+                                Navigator.pop(sheetCtx);
+                                await shareService.shareImage(imagePath: imagePath, oreumName: stamp.oreumName, text: '${stamp.oreumName} 등반 완료!\n#제주오름 #등산');
+                              } catch (e) {
+                                setSheet(() => isProcessing = false);
+                              }
+                            },
+                            icon: const Icon(Icons.share, size: 18),
+                            label: const Text('공유', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: SizedBox(
+                          height: 50,
+                          child: ElevatedButton.icon(
+                            onPressed: isProcessing ? null : () async {
+                              setSheet(() => isProcessing = true);
+                              try {
+                                final imagePath = await capturePreview();
+                                await Gal.putImage(imagePath);
+                                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('갤러리에 저장되었습니다.')));
+                              } catch (e) {
+                                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('저장에 실패했습니다.')));
+                              } finally {
+                                setSheet(() => isProcessing = false);
+                              }
+                            },
+                            icon: const Icon(Icons.save_alt, size: 18),
+                            label: const Text('저장', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey[400],
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
+
+    if (mounted && widget.autoShare) Navigator.pop(context);
   }
 
-  Widget _buildToggle(String label, IconData icon, bool value, ValueChanged<bool> onChanged) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: Colors.grey[600]),
-          const SizedBox(width: 12),
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 15))),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: AppColors.primary,
+  Widget _stickerBtn(String label, IconData icon, {required VoidCallback onTap, bool enabled = true}) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: enabled ? onTap : null,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: enabled ? AppColors.primary.withValues(alpha: 0.08) : Colors.grey[100],
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: enabled ? AppColors.primary.withValues(alpha: 0.3) : Colors.grey.shade300,
+            ),
           ),
-        ],
+          child: Column(
+            children: [
+              Icon(icon, size: 22, color: enabled ? AppColors.primary : Colors.grey),
+              const SizedBox(height: 3),
+              Text(label, style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.w600,
+                color: enabled ? AppColors.primary : Colors.grey,
+              )),
+            ],
+          ),
+        ),
       ),
     );
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -543,7 +706,9 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
 
     final kakaoMap = _buildKakaoMap();
 
-    return Stack(
+    return RepaintBoundary(
+      key: _mapCaptureKey,
+      child: Stack(
       children: [
         kakaoMap,
         // 경로 없음 안내
@@ -586,6 +751,7 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
           ),
         ),
       ],
+      ),
     );
   }
 
@@ -653,6 +819,10 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
     return KakaoMap(
       onMapCreated: (controller) {
         _mapController = controller;
+        // KakaoMap 플러그인은 didUpdateWidget에서만 polyline을 그리므로
+        // 최초 생성 시 수동으로 추가해야 함
+        controller.addPolyline(polylines: polylines);
+        controller.addMarker(markers: markers.toList());
         if (_routeData != null && _routeData!.isNotEmpty) {
           _fitBoundsToRoute(_routeData!
               .where((p) => p['lat'] != null && p['lng'] != null)
@@ -1237,4 +1407,59 @@ class _HikingDetailScreenState extends State<HikingDetailScreen> {
       (m) => '${m[1]},',
     );
   }
+}
+
+enum _StickerKind { route, stats, date, all }
+
+class _StickerItem {
+  final _StickerKind kind;
+  double dx;
+  double dy;
+  double scale;
+  bool isWhiteText;
+  double gestureBaseScale = 1.0;
+  _StickerItem({required this.kind, this.dx = 0.1, this.dy = 0.1, this.scale = 1.0, this.isWhiteText = true});
+}
+
+class _ShareRoutePainter extends CustomPainter {
+  final List<Map<String, double>> points;
+  _ShareRoutePainter({required this.points});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.length < 2) return;
+    double minLat = points.first['lat']!, maxLat = minLat;
+    double minLng = points.first['lng']!, maxLng = minLng;
+    for (final p in points) {
+      minLat = math.min(minLat, p['lat']!); maxLat = math.max(maxLat, p['lat']!);
+      minLng = math.min(minLng, p['lng']!); maxLng = math.max(maxLng, p['lng']!);
+    }
+    final latR = maxLat - minLat, lngR = maxLng - minLng;
+    if (latR == 0 && lngR == 0) return;
+
+    const pad = 30.0;
+    final aW = size.width - pad * 2, aH = size.height - pad * 2;
+    final ms = math.min(lngR > 0 ? aW / lngR : 1.0, latR > 0 ? aH / latR : 1.0);
+    final ox = pad + (aW - lngR * ms) / 2;
+    final oy = pad + (aH - latR * ms) / 2;
+
+    Offset c(Map<String, double> p) => Offset(ox + (p['lng']! - minLng) * ms, oy + (maxLat - p['lat']!) * ms);
+
+    final path = Path();
+    path.moveTo(c(points.first).dx, c(points.first).dy);
+    for (int i = 1; i < points.length; i++) { final pt = c(points[i]); path.lineTo(pt.dx, pt.dy); }
+
+    canvas.drawPath(path, Paint()..color = Colors.black38..style = PaintingStyle.stroke..strokeWidth = 4..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round);
+    canvas.drawPath(path, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2.5..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round);
+
+    final s = c(points.first);
+    canvas.drawCircle(s, 5, Paint()..color = Colors.greenAccent);
+    canvas.drawCircle(s, 3, Paint()..color = Colors.white);
+    final e = c(points.last);
+    canvas.drawCircle(e, 5, Paint()..color = Colors.redAccent);
+    canvas.drawCircle(e, 3, Paint()..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShareRoutePainter old) => old.points.length != points.length;
 }

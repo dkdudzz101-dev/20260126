@@ -31,7 +31,7 @@ class PostModel {
     this.userStampCount,
   });
 
-  int get userLevel => ((userStampCount ?? 0) ~/ 10) + 1;
+  int get userLevel => userStampCount ?? 0;
 
   factory PostModel.fromJson(Map<String, dynamic> json) {
     // stamp_count 계산: stamps 배열의 길이 또는 직접 제공된 값

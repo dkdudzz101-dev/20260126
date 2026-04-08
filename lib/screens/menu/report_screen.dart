@@ -9,12 +9,17 @@ class ReportScreen extends StatefulWidget {
   State<ReportScreen> createState() => _ReportScreenState();
 }
 
-class _ReportScreenState extends State<ReportScreen> {
+class _ReportScreenState extends State<ReportScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   final _formKey = GlobalKey<FormState>();
   final _contentController = TextEditingController();
   final ReportService _reportService = ReportService();
   String _selectedType = '부적절한 게시물';
   bool _isSubmitting = false;
+
+  // 신고 이력
+  List<Map<String, dynamic>> _myReports = [];
+  bool _isLoadingReports = true;
 
   final List<Map<String, dynamic>> _reportTypes = [
     {'type': '부적절한 게시물', 'icon': Icons.article_outlined},
@@ -26,9 +31,37 @@ class _ReportScreenState extends State<ReportScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (_tabController.index == 1 && _isLoadingReports) {
+        _loadMyReports();
+      }
+    });
+  }
+
+  @override
   void dispose() {
+    _tabController.dispose();
     _contentController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadMyReports() async {
+    try {
+      final reports = await _reportService.getMyReports();
+      if (mounted) {
+        setState(() {
+          _myReports = reports;
+          _isLoadingReports = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingReports = false);
+      }
+    }
   }
 
   @override
@@ -36,92 +69,254 @@ class _ReportScreenState extends State<ReportScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('신고하기'),
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: AppColors.primary,
+          unselectedLabelColor: AppColors.textSecondary,
+          indicatorColor: AppColors.primary,
+          tabs: const [
+            Tab(text: '신고 작성'),
+            Tab(text: '신고 이력'),
+          ],
+        ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 안내
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.warning_amber_outlined, color: Colors.red),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        '허위 신고 시 서비스 이용이 제한될 수 있습니다.',
-                        style: TextStyle(fontSize: 13, color: Colors.red),
-                      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildReportForm(),
+          _buildReportHistory(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportForm() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 안내
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_outlined, color: Colors.red),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      '허위 신고 시 서비스 이용이 제한될 수 있습니다.',
+                      style: TextStyle(fontSize: 13, color: Colors.red),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // 신고 유형
-              const Text(
-                '신고 유형',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-              ),
-              const SizedBox(height: 12),
-              ...(_reportTypes.map((item) => _buildReportTypeItem(item))),
-              const SizedBox(height: 24),
-
-              // 상세 내용
-              const Text(
-                '상세 내용',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-              ),
-              const SizedBox(height: 8),
-              TextFormField(
-                controller: _contentController,
-                maxLines: 5,
-                maxLength: 500,
-                decoration: const InputDecoration(
-                  hintText: '신고 내용을 자세히 작성해주세요',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return '신고 내용을 입력해주세요';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 24),
-
-              // 제출 버튼
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submitReport,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
-                  child: _isSubmitting
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text('신고하기'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // 신고 유형
+            const Text(
+              '신고 유형',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+            ),
+            const SizedBox(height: 12),
+            ...(_reportTypes.map((item) => _buildReportTypeItem(item))),
+            const SizedBox(height: 24),
+
+            // 상세 내용
+            const Text(
+              '상세 내용',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _contentController,
+              maxLines: 5,
+              maxLength: 500,
+              decoration: const InputDecoration(
+                hintText: '신고 내용을 자세히 작성해주세요',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return '신고 내용을 입력해주세요';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 24),
+
+            // 제출 버튼
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isSubmitting ? null : _submitReport,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
+                child: _isSubmitting
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('신고하기'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReportHistory() {
+    if (_isLoadingReports) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_myReports.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inbox_outlined, size: 64, color: Colors.grey.shade300),
+            const SizedBox(height: 16),
+            Text(
+              '신고 이력이 없습니다',
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 16),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        setState(() => _isLoadingReports = true);
+        await _loadMyReports();
+      },
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: _myReports.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          return _buildReportCard(_myReports[index]);
+        },
+      ),
+    );
+  }
+
+  Widget _buildReportCard(Map<String, dynamic> report) {
+    final status = report['status'] as String? ?? 'pending';
+    final createdAt = DateTime.tryParse(report['created_at'] ?? '');
+    final dateStr = createdAt != null
+        ? '${createdAt.year}.${createdAt.month.toString().padLeft(2, '0')}.${createdAt.day.toString().padLeft(2, '0')}'
+        : '';
+    final answer = report['answer'] as String?;
+
+    Color statusColor;
+    String statusText;
+    switch (status) {
+      case 'answered':
+        statusColor = Colors.green;
+        statusText = '답변완료';
+        break;
+      case 'in_progress':
+        statusColor = Colors.orange;
+        statusText = '처리중';
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusText = '접수';
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  statusText,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: statusColor,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                dateStr,
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 10),
+          Text(
+            report['reason'] ?? '',
+            style: const TextStyle(fontSize: 13),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (answer != null && answer.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.support_agent, size: 16, color: Colors.green.shade700),
+                      const SizedBox(width: 6),
+                      Text(
+                        '답변',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.green.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    answer,
+                    style: TextStyle(fontSize: 13, color: Colors.green.shade900),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -177,6 +372,12 @@ class _ReportScreenState extends State<ReportScreen> {
 
         if (!mounted) return;
 
+        _contentController.clear();
+        setState(() => _isSubmitting = false);
+
+        _isLoadingReports = true;
+        _loadMyReports();
+
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
@@ -186,7 +387,7 @@ class _ReportScreenState extends State<ReportScreen> {
               TextButton(
                 onPressed: () {
                   Navigator.pop(context);
-                  Navigator.pop(context);
+                  _tabController.animateTo(1);
                 },
                 child: const Text('확인'),
               ),

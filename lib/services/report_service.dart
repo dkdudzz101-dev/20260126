@@ -107,6 +107,20 @@ class ReportService {
     });
   }
 
+  // 내 신고 이력 조회
+  Future<List<Map<String, dynamic>>> getMyReports() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return [];
+
+    final response = await _client
+        .from('reports')
+        .select()
+        .eq('reporter_id', userId)
+        .order('created_at', ascending: false);
+
+    return List<Map<String, dynamic>>.from(response);
+  }
+
   // 일반 신고 (앱 관련 문제 등)
   Future<void> reportGeneral({
     required String reason,

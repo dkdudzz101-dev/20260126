@@ -11,6 +11,7 @@ import 'providers/oreum_provider.dart';
 import 'providers/stamp_provider.dart';
 import 'providers/community_provider.dart';
 import 'providers/badge_provider.dart';
+import 'providers/hiking_provider.dart';
 import 'services/pedometer_service.dart';
 import 'services/background_location_service.dart';
 import 'services/force_update_service.dart';
@@ -28,7 +29,7 @@ void main() async {
       KakaoConfig.initialize();
 
       // 카카오맵 초기화
-      AuthRepository.initialize(appKey: KakaoConfig.javaScriptAppKey);
+      AuthRepository.initialize(appKey: KakaoConfig.javaScriptAppKey, baseUrl: 'https://localhost');
     } catch (e) {
       debugPrint('SDK 초기화 에러: $e');
     }
@@ -73,6 +74,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => StampProvider()),
         ChangeNotifierProvider(create: (_) => CommunityProvider()),
         ChangeNotifierProvider(create: (_) => BadgeProvider()),
+        ChangeNotifierProvider(create: (_) => HikingProvider()),
         ChangeNotifierProvider.value(value: pedometerService),
       ],
       child: MaterialApp(

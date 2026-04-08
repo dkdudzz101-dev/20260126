@@ -579,9 +579,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final stampProvider = context.watch<StampProvider>();
     final stamps = stampProvider.stamps;
 
-    // 최근 5개만 표시
-    final recentStamps = stamps.take(5).toList();
-
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -595,14 +592,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                '내 기록',
+                '내 기록 (${stamps.length})',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
-              if (stamps.isNotEmpty)
-                TextButton(
-                  onPressed: () => _showHistory(context),
-                  child: const Text('전체보기'),
-                ),
             ],
           ),
           const SizedBox(height: 12),
@@ -624,10 +616,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ListView.separated(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: recentStamps.length,
+              itemCount: stamps.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, index) {
-                final stamp = recentStamps[index];
+                final stamp = stamps[index];
                 final date = stamp.stampedAt;
                 final dateStr = '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
 
@@ -703,7 +695,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                dateStr,
+                                dateStr +
+                                    (stamp.distanceWalked != null
+                                        ? ' · ${(stamp.distanceWalked! / 1000).toStringAsFixed(1)}km'
+                                        : ''),
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: AppColors.textSecondary,
@@ -712,6 +707,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ],
                           ),
                         ),
+                        if (stamp.isHikingLog)
+                          GestureDetector(
+                            onTap: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (_) => AlertDialog(
+                                  title: const Text('기록 삭제'),
+                                  content: Text('${stamp.oreumName} 등반 기록을 삭제할까요?'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, false),
+                                      child: const Text('취소'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, true),
+                                      child: const Text('삭제', style: TextStyle(color: Colors.red)),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (confirm == true && context.mounted) {
+                                await context.read<StampProvider>().deleteHikingLog(stamp.id);
+                              }
+                            },
+                            child: const Padding(
+                              padding: EdgeInsets.only(left: 8),
+                              child: Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                            ),
+                          ),
                         const Icon(
                           Icons.chevron_right,
                           color: AppColors.textHint,
@@ -752,7 +776,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const Divider(height: 1),
           _buildMenuItem(
-            icon: Icons.bookmark_outline,
+            icon: Icons.favorite_border,
             title: '저장한 오름',
             onTap: () => _showBookmarks(context),
           ),
@@ -1303,93 +1327,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showHistory(BuildContext context) {
-    final stamps = context.read<StampProvider>().stamps;
-
-    if (stamps.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('탐험 기록이 없습니다')),
-      );
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return Container(
-          height: 400,
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.border,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                '탐험 기록 (${stamps.length})',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: stamps.length,
-                  itemBuilder: (context, index) {
-                    final stamp = stamps[index];
-                    return ListTile(
-                      leading: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: stamp.isStamp
-                              ? AppColors.primary.withOpacity(0.1)
-                              : Colors.orange.withOpacity(0.1),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          stamp.isStamp ? Icons.verified : Icons.hiking,
-                          color: stamp.isStamp ? AppColors.primary : Colors.orange,
-                        ),
-                      ),
-                      title: Text(
-                        stamp.memo != null && stamp.memo!.isNotEmpty
-                            ? '${stamp.oreumName} - ${stamp.memo}'
-                            : stamp.oreumName,
-                      ),
-                      subtitle: Text(
-                        '${stamp.stampedAt.year}.${stamp.stampedAt.month}.${stamp.stampedAt.day}'
-                        '${stamp.distanceWalked != null ? ' · ${(stamp.distanceWalked! / 1000).toStringAsFixed(1)}km' : ''}',
-                      ),
-                      trailing: const Icon(Icons.chevron_right, color: AppColors.textHint),
-                      onTap: () {
-                        Navigator.pop(context); // 바텀시트 닫기
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => HikingDetailScreen(stamp: stamp),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 
   void _showHelp(BuildContext context) {
     showDialog(

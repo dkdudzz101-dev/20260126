@@ -18,6 +18,15 @@ class ArCameraScreen extends StatefulWidget {
   State<ArCameraScreen> createState() => _ArCameraScreenState();
 }
 
+class _LabelLineData {
+  final double fromX;
+  final double fromY;
+  final double toX;
+  final double toY;
+  final double distanceRatio; // 0~1 (가까울수록 0)
+  _LabelLineData({required this.fromX, required this.fromY, required this.toX, required this.toY, required this.distanceRatio});
+}
+
 class _NearbyOreum {
   final OreumModel oreum;
   final double distance; // meters
@@ -56,8 +65,8 @@ class _ArCameraScreenState extends State<ArCameraScreen>
   String? _errorMessage;
 
   // 거리 필터
-  static const List<int> _distanceOptions = [1000, 3000, 5000, 10000];
-  static const List<String> _distanceLabels = ['1km', '3km', '5km', '10km'];
+  static const List<int> _distanceOptions = [1000, 3000, 5000, 10000, 20000];
+  static const List<String> _distanceLabels = ['1km', '3km', '5km', '10km', '20km'];
   int _selectedDistanceIndex = 1; // 기본 3km
 
   @override
@@ -500,13 +509,14 @@ class _ArCameraScreenState extends State<ArCameraScreen>
     final screenHeight = MediaQuery.of(context).size.height;
     final List<Widget> labels = [];
     const cameraFov = 75.0;
-    const labelHeight = 52.0; // 라벨 대략 높이
+    const labelHeight = 56.0;
     const labelWidth = 120.0;
-
-    // 이미 배치된 라벨들의 영역 (겹침 방지용)
     final List<Rect> placed = [];
+    final List<_LabelLineData> lineData = [];
 
     final maxDist = _distanceOptions[_selectedDistanceIndex].toDouble();
+    // 수평선 Y (라벨 아래쪽, 화면 60% 지점)
+    final horizonY = screenHeight * 0.62;
 
     for (int i = 0; i < _nearbyOreums.length; i++) {
       final nearby = _nearbyOreums[i];
@@ -521,34 +531,47 @@ class _ArCameraScreenState extends State<ArCameraScreen>
       final x = (screenWidth / 2 + xRatio * (screenWidth / 2) - labelWidth / 2)
           .clamp(4.0, screenWidth - labelWidth - 4);
 
-      // 기본 Y: 가까우면 아래, 멀면 위
-      final yBase = screenHeight * 0.25 +
-          (nearby.distance / maxDist) * screenHeight * 0.30;
+      final yBase = screenHeight * 0.20 +
+          (nearby.distance / maxDist) * screenHeight * 0.28;
 
-      // 겹침 방지: 위아래로 밀어냄
       double y = yBase;
-      final candidate = Rect.fromLTWH(x, y, labelWidth, labelHeight);
       int attempts = 0;
-      while (_overlaps(candidate.translate(0, y - yBase), placed) && attempts < 8) {
+      while (_overlaps(Rect.fromLTWH(x, y, labelWidth, labelHeight), placed) && attempts < 8) {
         attempts++;
-        // 번갈아 위/아래로
         y = yBase + (attempts.isOdd ? 1 : -1) * ((attempts + 1) ~/ 2) * (labelHeight + 6);
       }
-      // 화면 범위 내로
       y = y.clamp(
-        MediaQuery.of(context).padding.top + 60,
-        screenHeight - 120,
+        MediaQuery.of(context).padding.top + 70.0,
+        horizonY - labelHeight - 8,
       );
 
       placed.add(Rect.fromLTWH(x, y, labelWidth, labelHeight));
 
-      labels.add(
-        Positioned(
-          left: x,
-          top: y,
-          child: _buildOreumLabel(nearby),
+      final anchorX = x + labelWidth / 2;
+      final ratio = (nearby.distance / maxDist).clamp(0.0, 1.0);
+
+      lineData.add(_LabelLineData(
+        fromX: anchorX,
+        fromY: y + labelHeight,
+        toX: anchorX,
+        toY: horizonY,
+        distanceRatio: ratio,
+      ));
+
+      labels.add(Positioned(
+        left: x,
+        top: y,
+        child: _buildOreumLabel(nearby, ratio),
+      ));
+    }
+
+    // 연결선 레이어 (라벨 뒤에)
+    if (lineData.isNotEmpty) {
+      labels.insert(0, Positioned.fill(
+        child: CustomPaint(
+          painter: _ArLinePainter(lines: lineData, horizonY: horizonY),
         ),
-      );
+      ));
     }
 
     return labels;
@@ -561,40 +584,144 @@ class _ArCameraScreenState extends State<ArCameraScreen>
     return false;
   }
 
-  Widget _buildOreumLabel(_NearbyOreum nearby) {
+  Widget _buildOreumLabel(_NearbyOreum nearby, double distRatio) {
+    // 가까울수록 초록, 멀수록 빨강
+    final labelColor = Color.lerp(
+      const Color(0xFF4CAF50),  // 초록
+      const Color(0xFFFF5252),  // 빨강
+      distRatio,
+    )!;
+
     return Container(
       width: 120,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.65),
+        color: Colors.black.withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.3), width: 0.5),
+        border: Border.all(color: labelColor.withValues(alpha: 0.85), width: 1.5),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            nearby.oreum.name,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
+          // 컬러 상단 바
+          Container(
+            height: 4,
+            decoration: BoxDecoration(
+              color: labelColor,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
             ),
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 2),
-          Text(
-            '${_formatDistance(nearby.distance)}'
-            '${nearby.oreum.elevation != null ? ' · ${nearby.oreum.elevation}m' : ''}',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.8),
-              fontSize: 11,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Column(
+              children: [
+                Text(
+                  nearby.oreum.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${_formatDistance(nearby.distance)}'
+                  '${nearby.oreum.elevation != null ? ' · ${nearby.oreum.elevation}m' : ''}',
+                  style: TextStyle(
+                    color: labelColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
-            textAlign: TextAlign.center,
           ),
         ],
       ),
     );
   }
+}
+
+class _ArLinePainter extends CustomPainter {
+  final List<_LabelLineData> lines;
+  final double horizonY;
+
+  _ArLinePainter({required this.lines, required this.horizonY});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 수평선 (희미하게)
+    canvas.drawLine(
+      Offset(0, horizonY),
+      Offset(size.width, horizonY),
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.12)
+        ..strokeWidth = 0.8,
+    );
+
+    for (final line in lines) {
+      final color = Color.lerp(
+        const Color(0xFF4CAF50),
+        const Color(0xFFFF5252),
+        line.distanceRatio,
+      )!;
+
+      // 점선 그리기
+      _drawDashedLine(
+        canvas,
+        Offset(line.fromX, line.fromY),
+        Offset(line.toX, line.toY),
+        color.withValues(alpha: 0.75),
+      );
+
+      // 수평선 위 원형 마커
+      canvas.drawCircle(
+        Offset(line.toX, line.toY),
+        5,
+        Paint()..color = color.withValues(alpha: 0.9),
+      );
+      canvas.drawCircle(
+        Offset(line.toX, line.toY),
+        2.5,
+        Paint()..color = Colors.white,
+      );
+    }
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Color color) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    const dashLen = 7.0;
+    const gapLen = 5.0;
+
+    final dx = end.dx - start.dx;
+    final dy = end.dy - start.dy;
+    final dist = math.sqrt(dx * dx + dy * dy);
+    if (dist == 0) return;
+    final ux = dx / dist;
+    final uy = dy / dist;
+
+    double pos = 0;
+    bool drawing = true;
+    while (pos < dist) {
+      final segLen = math.min(drawing ? dashLen : gapLen, dist - pos);
+      if (drawing) {
+        canvas.drawLine(
+          Offset(start.dx + ux * pos, start.dy + uy * pos),
+          Offset(start.dx + ux * (pos + segLen), start.dy + uy * (pos + segLen)),
+          paint,
+        );
+      }
+      pos += segLen;
+      drawing = !drawing;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ArLinePainter old) =>
+      old.lines.length != lines.length || old.horizonY != horizonY;
 }

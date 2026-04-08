@@ -21,116 +21,40 @@ class RankingUser {
 class RankingService {
   static final _client = SupabaseConfig.client;
 
-  /// 전체 랭킹 조회 (완등 수 기준, 상위 limit명)
+  /// 전체 랭킹 조회 (완등 수 기준, 상위 limit명) - RPC 사용
   static Future<List<RankingUser>> getRanking({int limit = 100}) async {
     try {
-      // stamps 테이블에서 user_id별 완등 수 집계
-      final response = await _client
-          .from('stamps')
-          .select('user_id');
+      final response = await _client.rpc('get_user_ranking', params: {
+        'p_limit': limit,
+      });
 
-      // user_id별 카운트
-      final Map<String, int> countMap = {};
-      for (final row in response) {
-        final uid = row['user_id'] as String;
-        countMap[uid] = (countMap[uid] ?? 0) + 1;
-      }
-
-      if (countMap.isEmpty) return [];
-
-      // 유저 정보 가져오기
-      final userIds = countMap.keys.toList();
-      final users = await _client
-          .from('users')
-          .select('id, nickname, profile_image')
-          .inFilter('id', userIds);
-
-      final Map<String, Map<String, dynamic>> userMap = {};
-      for (final u in users) {
-        userMap[u['id'] as String] = u;
-      }
-
-      // 정렬 (완등 수 내림차순)
-      final sorted = countMap.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-
-      final result = <RankingUser>[];
-      int rank = 1;
-      int prevCount = -1;
-
-      for (final entry in sorted) {
-        if (result.length >= limit) break;
-
-        if (entry.value != prevCount) {
-          rank = result.length + 1;
-          prevCount = entry.value;
-        }
-
-        final user = userMap[entry.key];
-        result.add(RankingUser(
-          userId: entry.key,
-          nickname: user?['nickname'] as String? ?? '탐험가',
-          profileImage: user?['profile_image'] as String?,
-          stampCount: entry.value,
-          rank: rank,
-        ));
-      }
-
-      return result;
+      final List data = response as List;
+      return data.map((row) => RankingUser(
+        userId: row['user_id'] as String,
+        nickname: row['nickname'] as String? ?? '탐험가',
+        profileImage: row['profile_image'] as String?,
+        stampCount: (row['stamp_count'] as num).toInt(),
+        rank: (row['rank'] as num).toInt(),
+      )).toList();
     } catch (e) {
       return [];
     }
   }
 
-  /// 오름별 인기 순위 (인증 많은 순)
+  /// 오름별 인기 순위 (인증 많은 순) - RPC 사용
   static Future<List<Map<String, dynamic>>> getOreumRanking({int limit = 100}) async {
     try {
-      final response = await _client
-          .from('stamps')
-          .select('oreum_id');
+      final response = await _client.rpc('get_oreum_ranking', params: {
+        'p_limit': limit,
+      });
 
-      final Map<String, int> countMap = {};
-      for (final row in response) {
-        final oid = row['oreum_id'].toString();
-        countMap[oid] = (countMap[oid] ?? 0) + 1;
-      }
-
-      if (countMap.isEmpty) return [];
-
-      // 오름 정보 가져오기
-      final oreumIds = countMap.keys.toList();
-      final oreums = await _client
-          .from('oreums')
-          .select('id, name')
-          .inFilter('id', oreumIds);
-
-      final Map<String, String> nameMap = {};
-      for (final o in oreums) {
-        nameMap[o['id'].toString()] = o['name'] as String? ?? '';
-      }
-
-      final sorted = countMap.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-
-      final result = <Map<String, dynamic>>[];
-      int rank = 1;
-      int prevCount = -1;
-
-      for (final entry in sorted) {
-        if (result.length >= limit) break;
-        if (entry.value != prevCount) {
-          rank = result.length + 1;
-          prevCount = entry.value;
-        }
-        result.add({
-          'oreum_id': entry.key,
-          'name': nameMap[entry.key] ?? '알 수 없는 오름',
-          'count': entry.value,
-          'rank': rank,
-        });
-      }
-
-      return result;
+      final List data = response as List;
+      return data.map((row) => <String, dynamic>{
+        'oreum_id': row['oreum_id'] as String,
+        'name': row['name'] as String? ?? '알 수 없는 오름',
+        'count': (row['stamp_count'] as num).toInt(),
+        'rank': (row['rank'] as num).toInt(),
+      }).toList();
     } catch (e) {
       return [];
     }
@@ -177,28 +101,18 @@ class RankingService {
     }
   }
 
-  /// 내 순위 가져오기
+  /// 내 순위 가져오기 - RPC 사용
   static Future<int?> getMyRank() async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return null;
 
     try {
-      final response = await _client
-          .from('stamps')
-          .select('user_id');
+      final response = await _client.rpc('get_my_rank', params: {
+        'p_user_id': userId,
+      });
 
-      final Map<String, int> countMap = {};
-      for (final row in response) {
-        final uid = row['user_id'] as String;
-        countMap[uid] = (countMap[uid] ?? 0) + 1;
-      }
-
-      if (!countMap.containsKey(userId)) return null;
-
-      final myCount = countMap[userId]!;
-      // 나보다 완등 수가 많은 유저 수 + 1 = 내 순위
-      final higherCount = countMap.values.where((c) => c > myCount).length;
-      return higherCount + 1;
+      if (response == null) return null;
+      return (response as num).toInt();
     } catch (e) {
       return null;
     }

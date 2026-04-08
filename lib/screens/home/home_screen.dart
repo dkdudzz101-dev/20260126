@@ -1133,6 +1133,7 @@ class _HomeScreenState extends State<HomeScreen> {
       {'name': '전망좋은', 'icon': Icons.landscape, 'color': const Color(0xFF2196F3)},
       {'name': '숲속힐링', 'icon': Icons.forest, 'color': const Color(0xFF4CAF50)},
       {'name': '가족추천', 'icon': Icons.family_restroom, 'color': const Color(0xFF9C27B0)},
+      {'name': '강아지동반', 'icon': Icons.pets, 'color': const Color(0xFF795548)},
     ];
 
     return Column(
@@ -1225,6 +1226,9 @@ class _HomeScreenState extends State<HomeScreen> {
         break;
       case '가족추천':
         themeKey = 'family';
+        break;
+      case '강아지동반':
+        themeKey = 'pet';
         break;
       case '계절명소':
         themeKey = 'seasonal';

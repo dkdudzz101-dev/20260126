@@ -10,7 +10,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByPopular({int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image), oreums(name)')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
         .order('like_count', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -21,7 +21,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByLatest({int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image), oreums(name)')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
         .order('created_at', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -32,7 +32,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByOreum(String oreumId, {int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image), oreums(name)')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
         .eq('oreum_id', oreumId)
         .order('created_at', ascending: false)
         .range(offset, offset + limit - 1);
@@ -47,7 +47,7 @@ class CommunityService {
 
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image), oreums(name)')
+        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
         .eq('user_id', userId)
         .order('created_at', ascending: false);
 
@@ -59,7 +59,7 @@ class CommunityService {
     try {
       final response = await _client
           .from('posts')
-          .select('*, users(nickname, profile_image), oreums(name)')
+          .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
           .eq('id', postId)
           .maybeSingle();
 
@@ -94,14 +94,17 @@ class CommunityService {
     required String postId,
     required String content,
     String? oreumId,
+    String? category,
     List<String>? images,
   }) async {
-    await _client.from('posts').update({
+    final data = <String, dynamic>{
       'content': content,
       'oreum_id': oreumId,
       'images': images,
       'updated_at': DateTime.now().toIso8601String(),
-    }).eq('id', postId);
+    };
+    if (category != null) data['category'] = category;
+    await _client.from('posts').update(data).eq('id', postId);
   }
 
   // 게시글 삭제
@@ -113,7 +116,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getComments(String postId) async {
     final response = await _client
         .from('comments')
-        .select('*, users(nickname, profile_image)')
+        .select('*, users(nickname, profile_image, stamps(id))')
         .eq('post_id', postId)
         .order('created_at');
 

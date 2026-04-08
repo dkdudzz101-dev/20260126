@@ -10,6 +10,7 @@ import '../../providers/stamp_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/oreum_provider.dart';
 import '../../services/community_service.dart';
+import '../community/community_screen.dart';
 import '../../models/post_model.dart';
 import '../../services/blog_service.dart';
 import '../../services/map_service.dart';
@@ -276,8 +277,8 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                 ),
               if (oreum.difficulty != null) const SizedBox(width: 4),
               _buildAppBarBadge(
-                (oreum.trailStatus ?? 'checking') == 'verified' ? '확인됨' : '정보 없음',
-                (oreum.trailStatus ?? 'checking') == 'verified' ? Colors.green : Colors.orange,
+                (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty) ? '정보 있음' : '정보 없음',
+                (oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty) ? Colors.green : Colors.orange,
               ),
               const SizedBox(width: 4),
               if (oreum.restriction != null && oreum.restriction!.isNotEmpty)
@@ -296,7 +297,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
           builder: (context, oreumProvider, authProvider, _) {
             final isBookmarked = oreumProvider.isBookmarked(oreum.id);
             return IconButton(
-              icon: Icon(isBookmarked ? Icons.bookmark : Icons.bookmark_border),
+              icon: Icon(isBookmarked ? Icons.favorite : Icons.favorite_border, color: isBookmarked ? Colors.red : null),
               onPressed: () async {
                 // 로그인 체크
                 if (!authProvider.isLoggedIn) {
@@ -572,12 +573,12 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   }
 
   Widget _buildTrailStatusRow() {
-    final isVerified = (oreum.trailStatus ?? 'checking') == 'verified';
-    final color = isVerified ? Colors.green : Colors.orange;
-    final statusLabel = isVerified ? '확인됨' : '정보 없음';
+    final hasTrailData = oreum.geojsonPath != null && oreum.geojsonPath!.isNotEmpty;
+    final color = hasTrailData ? Colors.green : Colors.orange;
+    final statusLabel = hasTrailData ? '정보 있음' : '정보 없음';
 
     String dateStr = '';
-    if (isVerified && oreum.trailVerifiedAt != null) {
+    if (hasTrailData && oreum.trailVerifiedAt != null) {
       final d = oreum.trailVerifiedAt!;
       dateStr = ' (${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')})';
     }
@@ -622,7 +623,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
 
   Future<void> _manualVerifyTrailStatus() async {
     try {
-      // 등산로 현황을 '확인됨'으로 변경
+      // 등산로 현황을 '정보 있음'으로 변경
       await _oreumService.updateTrailStatus(oreum.id, 'verified');
 
       // 스탬프(인증) 기록도 저장 → 인증된 오름 + 인증순위 반영
@@ -1503,7 +1504,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : IconButton(
-                      onPressed: _uploadGalleryImage,
+                      onPressed: _showWritePostDialog,
                       icon: const Icon(Icons.add_photo_alternate),
                       tooltip: '사진 추가',
                     ),
@@ -1526,7 +1527,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
                   const Text('아직 등록된 사진이 없습니다', style: TextStyle(color: AppColors.textSecondary)),
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
-                    onPressed: _uploadGalleryImage,
+                    onPressed: _showWritePostDialog,
                     icon: const Icon(Icons.add_photo_alternate, size: 18),
                     label: const Text('첫 번째 사진 올리기'),
                   ),
@@ -2205,109 +2206,31 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
   void _showWritePostDialog() {
     if (!LoginGuard.check(context, message: '후기를 작성하려면 로그인이 필요합니다.\n로그인 하시겠습니까?')) return;
 
-    final contentController = TextEditingController();
-    bool isSubmitting = false;
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 20,
-                right: 20,
-                top: 20,
-                bottom: MediaQuery.of(dialogContext).viewInsets.bottom + 20,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '${oreum.name} 후기',
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.pop(dialogContext),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: contentController,
-                    maxLines: 4,
-                    maxLength: 500,
-                    decoration: const InputDecoration(
-                      hintText: '방문 후기를 남겨주세요...',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: isSubmitting
-                          ? null
-                          : () async {
-                              if (contentController.text.trim().isEmpty) {
-                                ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                  const SnackBar(content: Text('내용을 입력해주세요')),
-                                );
-                                return;
-                              }
-                              setModalState(() => isSubmitting = true);
-                              try {
-                                await _communityService.createPost(
-                                  content: contentController.text.trim(),
-                                  oreumId: oreum.id,
-                                  category: '후기',
-                                );
-                                if (dialogContext.mounted) {
-                                  Navigator.pop(dialogContext);
-                                }
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('후기가 등록되었습니다')),
-                                  );
-                                  _loadOreumPosts();
-                                }
-                              } catch (e) {
-                                debugPrint('에러: $e');
-                                setModalState(() => isSubmitting = false);
-                                if (dialogContext.mounted) {
-                                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                    const SnackBar(content: Text('오류가 발생했습니다.')),
-                                  );
-                                }
-                              }
-                            },
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: isSubmitting
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('등록하기'),
-                    ),
-                  ),
-                ],
-              ),
+      builder: (ctx) => WritePostSheet(
+        initialOreumId: oreum.id,
+        initialOreumName: oreum.name,
+        initialCategory: '후기',
+        onSubmit: (content, oreumId, oreumName, category, imageUrls) async {
+          await _communityService.createPost(
+            content: content,
+            oreumId: oreumId,
+            category: category,
+            images: imageUrls,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('후기가 등록되었습니다')),
             );
-          },
-        );
-      },
+            _loadOreumPosts();
+          }
+        },
+      ),
     );
   }
 

@@ -1,7 +1,7 @@
 name: jeju_app
 description: "제주 오름 탐험 앱"
 publish_to: 'none'
-version: 1.5.0+37
+version: 1.6.0+38
 
 environment:
   sdk: ^3.5.0
@@ -79,6 +79,9 @@ dependencies:
   # 화면 캡처 (공유용)
   screenshot: ^3.0.0
   package_info_plus: ^9.0.0
+
+  # 갤러리 저장
+  gal: ^1.1.0
 
 dev_dependencies:
   flutter_test:

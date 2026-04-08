@@ -15,6 +15,14 @@ class HikingShareCard extends StatelessWidget {
   final double? elevationGain;
   /// 경로 좌표 리스트 [{lat, lng}, ...]
   final List<Map<String, double>>? routePoints;
+  /// 타이틀(오름이름+정보) 표시 여부
+  final bool showTitle;
+  /// 타이틀 크기 배율
+  final double titleScale;
+  /// 경로 크기 배율
+  final double routeScale;
+  /// 정보 텍스트 크기 배율
+  final double infoScale;
 
   const HikingShareCard({
     super.key,
@@ -28,6 +36,10 @@ class HikingShareCard extends StatelessWidget {
     this.calories,
     this.elevationGain,
     this.routePoints,
+    this.showTitle = true,
+    this.titleScale = 1.0,
+    this.routeScale = 1.0,
+    this.infoScale = 1.0,
   });
 
   bool get _hasPhoto => photoUrl != null || localPhotoFile != null;
@@ -94,40 +106,42 @@ class HikingShareCard extends StatelessWidget {
                 painter: _ShareRouteOverlayPainter(
                   points: routePoints!,
                   strokeColor: Colors.white,
-                  strokeWidth: 2.5,
+                  strokeWidth: 2.5 * routeScale,
+                  scale: routeScale,
                 ),
               ),
             ),
           // 워터마크
           Positioned(
             top: 16, right: 16,
-            child: Text('JEJUOREUM', style: TextStyle(
+            child: Text('제주오름', style: TextStyle(
               color: Colors.white.withValues(alpha: 0.85),
               fontSize: 13, fontWeight: FontWeight.w700,
-              letterSpacing: 2.0,
+              letterSpacing: 1.0,
             )),
           ),
           // 하단 정보
-          Positioned(
-            bottom: 0, left: 0, right: 0,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(oreumName, style: const TextStyle(
-                    color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold,
-                  )),
-                  if (infoParts.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(infoParts.join('  |  '), style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.85), fontSize: 12,
+          if (showTitle)
+            Positioned(
+              bottom: 0, left: 0, right: 0,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(oreumName, style: TextStyle(
+                      color: Colors.white, fontSize: 24 * titleScale, fontWeight: FontWeight.bold,
                     )),
+                    if (infoParts.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(infoParts.join('  |  '), style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85), fontSize: 12 * infoScale,
+                      )),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -182,9 +196,9 @@ class HikingShareCard extends StatelessWidget {
         children: [
           const Align(
             alignment: Alignment.centerRight,
-            child: Text('JEJUOREUM', style: TextStyle(
+            child: Text('제주오름', style: TextStyle(
               fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white70,
-              letterSpacing: 2.0,
+              letterSpacing: 1.0,
             )),
           ),
           const SizedBox(height: 20),
@@ -219,7 +233,7 @@ class HikingShareCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 16),
-          const Text('#JEJUOREUM #등산 #오름탐험', style: TextStyle(fontSize: 12, color: Colors.white70)),
+          const Text('#제주오름 #등산 #오름탐험', style: TextStyle(fontSize: 12, color: Colors.white70)),
         ],
       ),
     );
@@ -274,11 +288,13 @@ class _ShareRouteOverlayPainter extends CustomPainter {
   final List<Map<String, double>> points;
   final Color strokeColor;
   final double strokeWidth;
+  final double scale;
 
   _ShareRouteOverlayPainter({
     required this.points,
     this.strokeColor = Colors.white,
     this.strokeWidth = 2.5,
+    this.scale = 1.0,
   });
 
   @override
@@ -308,23 +324,23 @@ class _ShareRouteOverlayPainter extends CustomPainter {
     final lngRange = maxLng - minLng;
     if (latRange == 0 && lngRange == 0) return;
 
-    final padding = 30.0;
+    final padding = 30.0 / scale;
     final availableW = size.width - padding * 2;
     final availableH = size.height - padding * 2;
 
     final scaleX = lngRange > 0 ? availableW / lngRange : 1.0;
     final scaleY = latRange > 0 ? availableH / latRange : 1.0;
-    final scale = math.min(scaleX, scaleY);
+    final mapScale = math.min(scaleX, scaleY);
 
-    final scaledW = lngRange * scale;
-    final scaledH = latRange * scale;
+    final scaledW = lngRange * mapScale;
+    final scaledH = latRange * mapScale;
     final offsetX = padding + (availableW - scaledW) / 2;
     final offsetY = padding + (availableH - scaledH) / 2;
 
     Offset toCanvas(Map<String, double> p) {
       return Offset(
-        offsetX + ((p['lng'] ?? minLng) - minLng) * scale,
-        offsetY + (maxLat - (p['lat'] ?? maxLat)) * scale,
+        offsetX + ((p['lng'] ?? minLng) - minLng) * mapScale,
+        offsetY + (maxLat - (p['lat'] ?? maxLat)) * mapScale,
       );
     }
 
@@ -359,13 +375,13 @@ class _ShareRouteOverlayPainter extends CustomPainter {
 
     // 시작점
     final start = toCanvas(points.first);
-    canvas.drawCircle(start, 5, Paint()..color = Colors.greenAccent);
-    canvas.drawCircle(start, 3, Paint()..color = Colors.white);
+    canvas.drawCircle(start, 5 * scale, Paint()..color = Colors.greenAccent);
+    canvas.drawCircle(start, 3 * scale, Paint()..color = Colors.white);
 
     // 끝점
     final end = toCanvas(points.last);
-    canvas.drawCircle(end, 5, Paint()..color = Colors.redAccent);
-    canvas.drawCircle(end, 3, Paint()..color = Colors.white);
+    canvas.drawCircle(end, 5 * scale, Paint()..color = Colors.redAccent);
+    canvas.drawCircle(end, 3 * scale, Paint()..color = Colors.white);
   }
 
   @override

@@ -273,6 +273,44 @@ class CommunityProvider extends ChangeNotifier {
     }
   }
 
+  // 게시글 수정
+  Future<bool> updatePost({
+    required String postId,
+    required String content,
+    String? oreumId,
+    String? oreumName,
+    String? category,
+    List<String>? images,
+  }) async {
+    try {
+      await _communityService.updatePost(
+        postId: postId,
+        content: content,
+        oreumId: oreumId,
+        category: category,
+        images: images,
+      );
+      // 로컬 목록도 업데이트
+      final index = _posts.indexWhere((p) => p.id == postId);
+      if (index != -1) {
+        _posts[index] = _posts[index].copyWith(
+          content: content,
+          oreumId: oreumId,
+          oreumName: oreumName,
+          category: category,
+          images: images,
+          updatedAt: DateTime.now(),
+        );
+      }
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('게시글 수정 오류: $e');
+      return false;
+    }
+  }
+
   // 게시글 삭제
   Future<bool> deletePost(String postId) async {
     try {

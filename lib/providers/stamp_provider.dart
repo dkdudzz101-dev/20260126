@@ -117,6 +117,10 @@ class StampProvider extends ChangeNotifier {
   double _totalDistance = 0.0;
   int _totalSteps = 0;
 
+  // Cache control
+  DateTime? _lastLoadTime;
+  static const Duration _cacheTtl = Duration(minutes: 10);
+
   List<StampModel> get stamps => _stamps;
   List<StampModel> get stampOnly => _stamps.where((s) => s.isStamp).toList();
   List<StampModel> get hikingLogOnly => _stamps.where((s) => s.isHikingLog).toList();
@@ -134,45 +138,115 @@ class StampProvider extends ChangeNotifier {
   // 오름별 방문 횟수 (스탬프 + 등산기록 합산)
   int getVisitCount(String oreumId) => _visitCounts[oreumId] ?? 0;
 
-  // 스탬프 목록 로드 (Supabase에서)
-  Future<void> loadStamps() async {
+  // 스탬프 목록 로드 (Supabase RPC 단일 호출)
+  Future<void> loadStamps({bool force = false}) async {
+    // Return early if cache is fresh and not forced
+    if (!force &&
+        _lastLoadTime != null &&
+        _stamps.isNotEmpty &&
+        DateTime.now().difference(_lastLoadTime!) < _cacheTtl) {
+      return;
+    }
+
     _isLoading = true;
     notifyListeners();
 
     try {
-      final stampData = await _stampService.getUserStamps();
-      _stamps.clear();
-      _stampedOreumIds.clear();
-      _visitCounts.clear();
+      // RPC 단일 호출로 모든 데이터 가져오기
+      final summary = await _stampService.getUserStampSummary();
 
-      for (final data in stampData) {
-        final stamp = StampModel.fromJson(data);
-        _stamps.add(stamp);
-        // 완등(stamp)만 stampedOreumIds에 추가
-        if (stamp.isStamp) {
-          _stampedOreumIds.add(stamp.oreumId);
+      if (summary != null) {
+        _stamps.clear();
+        _stampedOreumIds.clear();
+        _visitCounts.clear();
+
+        // stamps + hiking_logs를 합쳐서 처리
+        final List stampList = summary['stamps'] as List? ?? [];
+        final List hikingLogList = summary['hiking_logs'] as List? ?? [];
+
+        final allRecords = <Map<String, dynamic>>[];
+        for (final s in stampList) {
+          allRecords.add(Map<String, dynamic>.from(s as Map));
         }
-        // 방문 횟수 집계 (완등 stamp만)
-        if (stamp.isStamp) {
-          _visitCounts[stamp.oreumId] = (_visitCounts[stamp.oreumId] ?? 0) + 1;
+        for (final h in hikingLogList) {
+          allRecords.add(Map<String, dynamic>.from(h as Map));
         }
+
+        for (final data in allRecords) {
+          final stamp = StampModel.fromJson(data);
+          _stamps.add(stamp);
+          // 완등(stamp)만 stampedOreumIds에 추가
+          if (stamp.isStamp) {
+            _stampedOreumIds.add(stamp.oreumId);
+          }
+          // 방문 횟수 집계 (완등 stamp만)
+          if (stamp.isStamp) {
+            _visitCounts[stamp.oreumId] = (_visitCounts[stamp.oreumId] ?? 0) + 1;
+          }
+        }
+        // 날짜순 정렬 (최신순)
+        _stamps.sort((a, b) => b.stampedAt.compareTo(a.stampedAt));
+
+        // 전체 사용자 인증 오름 로드 (RPC에서 함께 반환)
+        final List certifiedIds = summary['certified_oreum_ids'] as List? ?? [];
+        _allCertifiedOreumIds = certifiedIds
+            .map((id) => id.toString())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+
+        // 총 이동거리/걸음수 (RPC에서 함께 반환)
+        _totalDistance = (summary['total_distance'] as num?)?.toDouble() ?? 0.0;
+        _totalSteps = (summary['total_steps'] as num?)?.toInt() ?? 0;
+      } else {
+        // RPC 실패 시 기존 방식으로 폴백
+        await _loadStampsFallback();
       }
-      // 날짜순 정렬 (최신순)
-      _stamps.sort((a, b) => b.stampedAt.compareTo(a.stampedAt));
 
-      // 전체 사용자 인증 오름 로드
-      _allCertifiedOreumIds = await _stampService.getAllCertifiedOreumIds();
-
-      // 총 이동거리/걸음수 로드
-      _totalDistance = await _stampService.getTotalDistance();
-      _totalSteps = await _stampService.getTotalSteps();
+      _lastLoadTime = DateTime.now();
     } catch (e) {
-      debugPrint('스탬프 로드 에러: $e');
-      _error = e.toString();
+      debugPrint('스탬프 RPC 로드 에러: $e, 폴백 시도...');
+      try {
+        await _loadStampsFallback();
+        _lastLoadTime = DateTime.now();
+      } catch (e2) {
+        debugPrint('스탬프 폴백 로드 에러: $e2');
+        _error = e2.toString();
+      }
     } finally {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  // 기존 방식 폴백 (RPC 함수가 아직 배포되지 않았을 때)
+  Future<void> _loadStampsFallback() async {
+    final stampData = await _stampService.getUserStamps();
+    _stamps.clear();
+    _stampedOreumIds.clear();
+    _visitCounts.clear();
+
+    for (final data in stampData) {
+      final stamp = StampModel.fromJson(data);
+      _stamps.add(stamp);
+      if (stamp.isStamp) {
+        _stampedOreumIds.add(stamp.oreumId);
+      }
+      if (stamp.isStamp) {
+        _visitCounts[stamp.oreumId] = (_visitCounts[stamp.oreumId] ?? 0) + 1;
+      }
+    }
+    _stamps.sort((a, b) => b.stampedAt.compareTo(a.stampedAt));
+
+    _allCertifiedOreumIds = await _stampService.getAllCertifiedOreumIds();
+    _totalDistance = await _stampService.getTotalDistance();
+    _totalSteps = await _stampService.getTotalSteps();
+  }
+
+  // 등반 기록 삭제 (hiking_log만, stamp 제외)
+  Future<void> deleteHikingLog(String logId) async {
+    await _stampService.deleteHikingLog(logId);
+    _stamps.removeWhere((s) => s.isHikingLog && s.id == logId);
+    notifyListeners();
   }
 
   // GPS 위치 확인 권한 요청
@@ -185,8 +259,11 @@ class StampProvider extends ChangeNotifier {
 
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
-      _error = '위치 권한이 필요합니다. 앱을 재시작하여 권한을 허용해주세요.';
-      return false;
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        _error = '위치 권한이 필요합니다';
+        return false;
+      }
     }
 
     if (permission == LocationPermission.deniedForever) {
@@ -220,14 +297,6 @@ class StampProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 이미 스탬프가 있는지 확인 (완등만)
-      if (_stamps.any((s) => s.oreumId == oreum.id && s.isStamp)) {
-        return StampResult(
-          success: false,
-          message: '이미 이 오름의 스탬프를 획득했습니다',
-        );
-      }
-
       // 현재 위치 가져오기
       final position = await getCurrentPosition();
       if (position == null) {
@@ -292,11 +361,15 @@ class StampProvider extends ChangeNotifier {
 
       _stamps.add(stamp);
       _stampedOreumIds.add(oreum.id);
+      _visitCounts[oreum.id] = (_visitCounts[oreum.id] ?? 0) + 1;
       notifyListeners();
 
+      final visitCount = _visitCounts[oreum.id] ?? 1;
       return StampResult(
         success: true,
-        message: '${oreum.name} 스탬프를 획득했습니다!',
+        message: visitCount > 1
+            ? '${oreum.name} ${visitCount}회차 인증 완료!'
+            : '${oreum.name} 스탬프를 획득했습니다!',
         stamp: stamp,
       );
     } catch (e) {
