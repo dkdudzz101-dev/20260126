@@ -1,7 +1,7 @@
 name: jeju_app
 description: "제주 오름 탐험 앱"
 publish_to: 'none'
-version: 1.6.0+38
+version: 1.6.2+40
 
 environment:
   sdk: ^3.5.0
