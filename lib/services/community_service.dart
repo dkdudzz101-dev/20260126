@@ -10,7 +10,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByPopular({int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .select('*, users(nickname, profile_image, stamp_count), oreums(name)')
         .order('like_count', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -21,7 +21,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByLatest({int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .select('*, users(nickname, profile_image, stamp_count), oreums(name)')
         .order('created_at', ascending: false)
         .range(offset, offset + limit - 1);
 
@@ -32,7 +32,7 @@ class CommunityService {
   Future<List<Map<String, dynamic>>> getPostsByOreum(String oreumId, {int limit = 20, int offset = 0}) async {
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .select('*, users(nickname, profile_image, stamp_count), oreums(name)')
         .eq('oreum_id', oreumId)
         .order('created_at', ascending: false)
         .range(offset, offset + limit - 1);
@@ -47,7 +47,7 @@ class CommunityService {
 
     final response = await _client
         .from('posts')
-        .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+        .select('*, users(nickname, profile_image, stamp_count), oreums(name)')
         .eq('user_id', userId)
         .order('created_at', ascending: false);
 
@@ -59,7 +59,7 @@ class CommunityService {
     try {
       final response = await _client
           .from('posts')
-          .select('*, users(nickname, profile_image, stamps(id)), oreums(name)')
+          .select('*, users(nickname, profile_image, stamp_count), oreums(name)')
           .eq('id', postId)
           .maybeSingle();
 

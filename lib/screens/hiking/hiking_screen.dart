@@ -49,6 +49,11 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   final TrailService _trailService = TrailService();
   final HikingRouteService _hikingRouteService = HikingRouteService();
 
+  // dispose() 및 타이머 콜백에서 context 사용이 불안전하므로 미리 캐싱
+  late HikingProvider _hikingProviderRef;
+  late PedometerService _pedometerServiceRef;
+  bool _hikingProviderInitialized = false;
+
   KakaoMapController? _mapController;
 
   // 현재 위치 커스텀 오버레이
@@ -75,7 +80,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   List<Position> _trackPositions = [];
   double _totalDistance = 0;
   int _elapsedSeconds = 0;
-  Timer? _timer;
+  // _timer 제거: 타이머는 HikingProvider가 단독 소유
 
   // 걸음수 추적
   int _startSteps = 0;
@@ -147,6 +152,51 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     _initializeAll(); // 비동기 초기화 통합
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final newProvider = context.read<HikingProvider>();
+    // 최초 호출 시 초기화
+    if (!_hikingProviderInitialized) {
+      _hikingProviderRef = newProvider;
+      _hikingProviderRef.addListener(_onProviderChanged);
+      _hikingProviderInitialized = true;
+    } else if (newProvider != _hikingProviderRef) {
+      _hikingProviderRef.removeListener(_onProviderChanged);
+      _hikingProviderRef = newProvider;
+      _hikingProviderRef.addListener(_onProviderChanged);
+    }
+    _pedometerServiceRef = context.read<PedometerService>();
+  }
+
+  /// Provider 타이머 틱마다 화면 로컬 변수를 동기화
+  void _onProviderChanged() {
+    if (!mounted) return;
+    final h = _hikingProviderRef;
+    setState(() {
+      _isHiking = h.isHiking;
+      _isStarting = h.isStarting;
+      _isPaused = h.isPaused;
+      _elapsedSeconds = h.elapsedSeconds;
+      _hikingSteps = h.hikingSteps;
+      _totalDistance = h.totalDistance;
+      _maxAltitude = h.maxAltitude;
+      _minAltitude = h.minAltitude;
+      _elevationGain = h.elevationGain;
+      _elevationLoss = h.elevationLoss;
+      _currentAltitude = h.currentAltitude;
+      _calculatedCalories = h.calculatedCalories;
+      _reachedSummit = h.reachedSummit;
+      _isDescending = h.isDescending;
+      _descentDistance = h.descentDistance;
+      _descentSeconds = h.descentSeconds;
+      _descentSteps = h.descentSteps;
+      _ascentDistance = h.ascentDistance;
+      _ascentSeconds = h.ascentSeconds;
+      _ascentSteps = h.ascentSteps;
+    });
+  }
+
   /// 비동기 초기화를 순서대로 처리
   Future<void> _initializeAll() async {
     await _checkInternetConnection();
@@ -181,8 +231,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
 
   /// Provider에서 등산 상태 복원 (화면 복귀 시)
   bool _restoreFromProvider(HikingProvider hiking) {
-    hiking.syncToScreen(); // Provider 타이머/GPS 멈춤
-
+    // Provider 타이머는 그대로 유지 — 화면은 리스너로 상태를 받음
     setState(() {
       _isHiking = hiking.isHiking;
       _isPaused = hiking.isPaused;
@@ -204,6 +253,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       _descentDistance = hiking.descentDistance;
       _descentSeconds = hiking.descentSeconds;
       _descentSteps = hiking.descentSteps;
+      _descentStartSteps = hiking.descentStartSteps;
       _ascentDistance = hiking.ascentDistance;
       _ascentSeconds = hiking.ascentSeconds;
       _ascentSteps = hiking.ascentSteps;
@@ -215,26 +265,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     _buildFacilityMarkers();
     _rebuildSummitCircles();
 
-    // 타이머 재시작
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!_isPaused) {
-        final currentSteps = context.read<PedometerService>().todaySteps;
-        setState(() {
-          _elapsedSeconds++;
-          _hikingSteps = currentSteps - _startSteps;
-          if (_hikingSteps < 0) _hikingSteps = 0;
-          if (_isDescending) {
-            _descentSeconds++;
-            _descentSteps = currentSteps - (_startSteps + _hikingSteps - _descentSteps);
-            if (_descentSteps < 0) _descentSteps = 0;
-          }
-        });
-        if (_elapsedSeconds % 10 == 0) _updateHikingNotification();
-      }
-    });
-
-    // GPS 추적 재시작
+    // GPS 추적 재시작 (Kakao 지도 표시용)
     _mapService.startTracking(onPositionUpdate: _onPositionUpdate);
 
     return true;
@@ -472,55 +503,18 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _compassSubscription?.cancel();
-    if (_isHiking) {
-      // 등산 중이면 Provider에 상태 싱크 (화면만 닫고 기록 유지)
-      _syncToProvider();
-      _saveHikingState();
-      // 타이머와 GPS는 Provider가 이어받음
-    } else {
-      _timer?.cancel();
-      _mapService.stopTracking();
+    // Provider 리스너 해제
+    if (_hikingProviderInitialized) {
+      _hikingProviderRef.removeListener(_onProviderChanged);
+    }
+    // GPS 추적 중단 (Provider 타이머는 계속 동작)
+    _mapService.stopTracking();
+    if (!_isHiking) {
       _mapService.dispose();
     }
     super.dispose();
   }
 
-  /// 현재 화면 상태를 Provider에 싱크
-  void _syncToProvider() {
-    final hiking = context.read<HikingProvider>();
-    hiking.syncFromScreen(
-      oreum: widget.oreum,
-      isHiking: _isHiking,
-      isPaused: _isPaused,
-      currentPosition: _currentPosition,
-      trackPositions: _trackPositions,
-      totalDistance: _totalDistance,
-      elapsedSeconds: _elapsedSeconds,
-      startSteps: _startSteps,
-      hikingSteps: _hikingSteps,
-      maxAltitude: _maxAltitude,
-      minAltitude: _minAltitude,
-      elevationGain: _elevationGain,
-      elevationLoss: _elevationLoss,
-      lastAltitude: _lastAltitude,
-      currentAltitude: _currentAltitude,
-      calculatedCalories: _calculatedCalories,
-      reachedSummit: _reachedSummit,
-      isDescending: _isDescending,
-      descentDistance: _descentDistance,
-      descentSeconds: _descentSeconds,
-      descentSteps: _descentSteps,
-      descentStartSteps: _isDescending ? (_startSteps + _hikingSteps - _descentSteps) : 0,
-      descentElevationGain: _isDescending ? 0 : 0,
-      descentElevationLoss: _isDescending ? 0 : 0,
-      ascentDistance: _ascentDistance,
-      ascentSeconds: _ascentSeconds,
-      ascentSteps: _ascentSteps,
-      pedometerService: context.read<PedometerService>(),
-      mapService: _mapService,
-      timer: _timer,
-    );
-  }
 
   void _startCompassTracking() {
     _compassSubscription?.cancel();
@@ -548,157 +542,65 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
-      // 앱이 백그라운드로 갈 때 (전화, 홈버튼 등) 상태 저장
-      if (_isHiking) {
-        _saveHikingState();
-      }
+      // Provider가 WidgetsBindingObserver로 자체 저장하므로 여기서는 불필요
     } else if (state == AppLifecycleState.resumed) {
-      // 앱이 다시 포그라운드로 돌아올 때
-      if (_isHiking) {
-        debugPrint('등산 기록 유지 중 - 앱 복귀');
-      }
+      if (_isHiking) debugPrint('등산 기록 유지 중 - 앱 복귀');
     }
   }
 
-  // 등산 상태 저장 (전화/백그라운드 시)
-  Future<void> _saveHikingState() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('hiking_active', true);
-      await prefs.setString('hiking_oreum_id', widget.oreum.id);
-      await prefs.setDouble('hiking_distance', _totalDistance);
-      await prefs.setInt('hiking_seconds', _elapsedSeconds);
-      await prefs.setInt('hiking_steps', _hikingSteps);
-      await prefs.setInt('hiking_start_steps', _startSteps);
-      await prefs.setDouble('hiking_max_alt', _maxAltitude);
-      await prefs.setDouble('hiking_min_alt', _minAltitude == double.infinity ? 0 : _minAltitude);
-      await prefs.setDouble('hiking_elev_gain', _elevationGain);
-      await prefs.setDouble('hiking_elev_loss', _elevationLoss);
-      await prefs.setDouble('hiking_last_alt', _lastAltitude);
-      await prefs.setBool('hiking_reached_summit', _reachedSummit);
-      await prefs.setInt('hiking_calories', _calculatedCalories);
-      await prefs.setBool('hiking_is_descending', _isDescending);
-      await prefs.setDouble('hiking_descent_dist', _descentDistance);
-      await prefs.setInt('hiking_descent_secs', _descentSeconds);
-      await prefs.setInt('hiking_descent_steps', _descentSteps);
-      await prefs.setDouble('hiking_ascent_dist', _ascentDistance);
-      await prefs.setInt('hiking_ascent_secs', _ascentSeconds);
-      await prefs.setInt('hiking_ascent_steps', _ascentSteps);
-      // 저장 시각 기록 (복원 시 경과 시간 보정용)
-      await prefs.setInt('hiking_saved_at', DateTime.now().millisecondsSinceEpoch);
-      // GPS 경로 저장 (최근 포인트들)
-      final positionData = _trackPositions.map((p) =>
-        '${p.latitude},${p.longitude},${p.altitude},${p.timestamp.toIso8601String()}'
-      ).toList();
-      await prefs.setStringList('hiking_positions', positionData);
-      debugPrint('등산 상태 저장 완료 (거리: ${_totalDistance}m, 시간: ${_elapsedSeconds}s)');
-    } catch (e) {
-      debugPrint('등산 상태 저장 실패: $e');
-    }
-  }
-
-  // 등산 상태 복원 (복원 성공 시 true 반환)
+  // 등산 상태 복원 — Provider에 위임 (타이머는 Provider가 시작)
   Future<bool> _restoreHikingState() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final isActive = prefs.getBool('hiking_active') ?? false;
-      final savedOreumId = prefs.getString('hiking_oreum_id') ?? '';
-
-      if (!isActive || savedOreumId != widget.oreum.id) return false;
-
-      final savedAt = prefs.getInt('hiking_saved_at') ?? 0;
-      if (savedAt == 0) return false;
-
-      // 경과 시간 보정
-      final elapsed = DateTime.now().millisecondsSinceEpoch - savedAt;
-      final additionalSeconds = elapsed ~/ 1000;
-
-      if (!mounted) return false;
-
-      setState(() {
-        _isHiking = true;
-        _totalDistance = prefs.getDouble('hiking_distance') ?? 0;
-        _elapsedSeconds = (prefs.getInt('hiking_seconds') ?? 0) + additionalSeconds;
-        _hikingSteps = prefs.getInt('hiking_steps') ?? 0;
-        _startSteps = prefs.getInt('hiking_start_steps') ?? 0;
-        _maxAltitude = prefs.getDouble('hiking_max_alt') ?? 0;
-        final savedMinAlt = prefs.getDouble('hiking_min_alt') ?? 0;
-        _minAltitude = savedMinAlt == 0 ? double.infinity : savedMinAlt;
-        _elevationGain = prefs.getDouble('hiking_elev_gain') ?? 0;
-        _elevationLoss = prefs.getDouble('hiking_elev_loss') ?? 0;
-        _lastAltitude = prefs.getDouble('hiking_last_alt') ?? 0;
-        _reachedSummit = prefs.getBool('hiking_reached_summit') ?? false;
-        _calculatedCalories = prefs.getInt('hiking_calories') ?? 0;
-        _isDescending = prefs.getBool('hiking_is_descending') ?? false;
-        _descentDistance = prefs.getDouble('hiking_descent_dist') ?? 0;
-        _descentSeconds = (prefs.getInt('hiking_descent_secs') ?? 0) + (_isDescending ? additionalSeconds : 0);
-        _descentSteps = prefs.getInt('hiking_descent_steps') ?? 0;
-        _ascentDistance = prefs.getDouble('hiking_ascent_dist') ?? 0;
-        _ascentSeconds = prefs.getInt('hiking_ascent_secs') ?? 0;
-        _ascentSteps = prefs.getInt('hiking_ascent_steps') ?? 0;
-      });
-
-      // GPS 경로 복원
-      final positionData = prefs.getStringList('hiking_positions') ?? [];
-      for (final data in positionData) {
-        final parts = data.split(',');
-        if (parts.length >= 3) {
-          _trackPositions.add(Position(
-            latitude: double.parse(parts[0]),
-            longitude: double.parse(parts[1]),
-            altitude: double.parse(parts[2]),
-            timestamp: parts.length >= 4 ? DateTime.parse(parts[3]) : DateTime.now(),
-            accuracy: 0,
-            altitudeAccuracy: 0,
-            heading: 0,
-            headingAccuracy: 0,
-            speed: 0,
-            speedAccuracy: 0,
-          ));
-        }
+    // 걸음수 서비스 준비
+    final actStatus = await Permission.activityRecognition.status;
+    if (actStatus.isGranted && mounted) {
+      if (!_pedometerServiceRef.isInitialized) {
+        await _pedometerServiceRef.initialize();
       }
-
-      // 경로 폴리라인 복원
-      _updateTrackPolyline();
-
-      // 걸음수 서비스 재시작
-      final actStatus = await Permission.activityRecognition.status;
-      if (actStatus.isGranted && mounted) {
-        final pedometer = context.read<PedometerService>();
-        if (!pedometer.isInitialized) {
-          await pedometer.initialize();
-        }
-        _startSteps = pedometer.todaySteps - _hikingSteps;
-      }
-
-      // 타이머 재시작
-      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (!_isPaused) {
-          final currentSteps = context.read<PedometerService>().todaySteps;
-          setState(() {
-            _elapsedSeconds++;
-            _hikingSteps = currentSteps - _startSteps;
-            if (_hikingSteps < 0) _hikingSteps = 0;
-
-            if (_isDescending) {
-              _descentSeconds++;
-              _descentSteps = currentSteps - _descentStartSteps;
-              if (_descentSteps < 0) _descentSteps = 0;
-            }
-          });
-        }
-      });
-
-      // GPS 추적 재시작
-      _mapService.startTracking(onPositionUpdate: _onPositionUpdate);
-
-      debugPrint('등산 상태 복원 완료');
-      return true;
-    } catch (e) {
-      debugPrint('등산 상태 복원 실패: $e');
-      await _clearHikingState();
-      return false;
     }
+
+    if (!mounted) return false;
+
+    final restored = await _hikingProviderRef.restoreHikingState(
+      oreumId: widget.oreum.id,
+      pedometerService: _pedometerServiceRef,
+    );
+
+    if (!restored) return false;
+    if (!mounted) return false;
+
+    // 화면 로컬 변수 동기화
+    final h = _hikingProviderRef;
+    setState(() {
+      _isHiking = true;
+      _totalDistance = h.totalDistance;
+      _elapsedSeconds = h.elapsedSeconds;
+      _hikingSteps = h.hikingSteps;
+      _startSteps = h.startSteps;
+      _maxAltitude = h.maxAltitude;
+      _minAltitude = h.minAltitude;
+      _elevationGain = h.elevationGain;
+      _elevationLoss = h.elevationLoss;
+      _lastAltitude = h.lastAltitude;
+      _reachedSummit = h.reachedSummit;
+      _calculatedCalories = h.calculatedCalories;
+      _isDescending = h.isDescending;
+      _descentDistance = h.descentDistance;
+      _descentSeconds = h.descentSeconds;
+      _descentSteps = h.descentSteps;
+      _descentStartSteps = h.descentStartSteps;
+      _ascentDistance = h.ascentDistance;
+      _ascentSeconds = h.ascentSeconds;
+      _ascentSteps = h.ascentSteps;
+      _trackPositions = List.from(h.trackPositions);
+    });
+
+    _updateTrackPolyline();
+
+    // GPS 추적 재시작 (Kakao 지도 표시용)
+    _mapService.startTracking(onPositionUpdate: _onPositionUpdate);
+
+    debugPrint('등산 상태 복원 완료 (화면)');
+    return true;
   }
 
   // 저장된 등산 상태 삭제
@@ -931,8 +833,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     }
 
     // 시작 걸음수 기록
-    final pedometer = context.read<PedometerService>();
-    _startSteps = pedometer.todaySteps;
+    _startSteps = _pedometerServiceRef.todaySteps;
 
     setState(() {
       _isStarting = false;
@@ -942,7 +843,6 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       _totalDistance = 0;
       _elapsedSeconds = 0;
       _hikingSteps = 0;
-      // 고도 초기화
       _maxAltitude = 0;
       _minAltitude = double.infinity;
       _elevationGain = 0;
@@ -952,121 +852,44 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
       _calculatedCalories = 0;
     });
 
-    // 시설물 마커 상태 유지 (선택된 마커 색상 유지)
     _buildFacilityMarkers();
 
-    // 백그라운드 서비스 시작 (권한 있을 때만)
-    if (bgGranted) {
-      BackgroundLocationService.startService();
-    }
-
-    // 타이머 시작 (걸음수도 함께 업데이트)
-    _updateHikingNotification(); // 초기 알림
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!_isPaused) {
-        final currentSteps = context.read<PedometerService>().todaySteps;
-        setState(() {
-          _elapsedSeconds++;
-          _hikingSteps = currentSteps - _startSteps;
-          if (_hikingSteps < 0) _hikingSteps = 0;
-
-          if (_isDescending) {
-            _descentSeconds++;
-            _descentSteps = currentSteps - _descentStartSteps;
-            if (_descentSteps < 0) _descentSteps = 0;
-          }
-        });
-        // 10초마다 알림 업데이트
-        if (_elapsedSeconds % 10 == 0) {
-          _updateHikingNotification();
-        }
-      }
-    });
-
-    // GPS 추적 시작
-    _mapService.startTracking(
-      onPositionUpdate: _onPositionUpdate,
+    // Provider에 등산 시작 알림 (타이머 시작)
+    _hikingProviderRef.initializeHike(
+      oreum: widget.oreum,
+      pedometerService: _pedometerServiceRef,
+      startSteps: _startSteps,
+      bgGranted: bgGranted,
     );
+
+    // GPS 추적 시작 (Kakao 지도 표시용 + Provider 데이터 갱신)
+    _mapService.startTracking(onPositionUpdate: _onPositionUpdate);
   }
 
   void _onPositionUpdate(Position position) {
     if (!mounted || _isPaused) return;
 
+    // Provider 데이터 갱신 (거리, 고도, trackPositions 등)
+    _hikingProviderRef.onPositionUpdate(position);
+
+    // 화면 로컬 상태는 _onProviderChanged 리스너가 동기화하므로
+    // 여기서는 지도 표시용 로컬 변수만 업데이트
     setState(() {
       _currentPosition = position;
-
-      // 이전 위치가 있으면 거리 계산
-      if (_trackPositions.isNotEmpty) {
-        final lastPos = _trackPositions.last;
-        final distance = _mapService.calculateDistance(
-          lastPos.latitude,
-          lastPos.longitude,
-          position.latitude,
-          position.longitude,
-        );
-        if (_isDescending) {
-          _descentDistance += distance;
-        } else {
-          _totalDistance += distance;
-        }
-      }
-
-      // 고도 추적
-      final altitude = position.altitude;
-      if (altitude > 0 && altitude < 10000) { // 유효한 고도값만 처리
-        _currentAltitude = altitude;
-
-        if (_trackPositions.isNotEmpty && _lastAltitude > 0) {
-          final altDiff = altitude - _lastAltitude;
-          // 노이즈 필터링: 2m 이상 차이만 반영
-          if (altDiff.abs() > 2) {
-            if (_isDescending) {
-              if (altDiff > 0) {
-                _descentElevationGain += altDiff;
-              } else {
-                _descentElevationLoss += altDiff.abs();
-              }
-            } else {
-              if (altDiff > 0) {
-                _elevationGain += altDiff;
-              } else {
-                _elevationLoss += altDiff.abs();
-              }
-            }
-          }
-        }
-
-        if (altitude > _maxAltitude) _maxAltitude = altitude;
-        if (altitude < _minAltitude) _minAltitude = altitude;
-        _lastAltitude = altitude;
-      }
-
-      _trackPositions.add(position);
-
-      // 정상까지 남은 거리 계산
-      if (widget.oreum.summitLat != null && widget.oreum.summitLng != null) {
-        _distanceToSummit = Geolocator.distanceBetween(
-          position.latitude,
-          position.longitude,
-          widget.oreum.summitLat!,
-          widget.oreum.summitLng!,
-        );
-      }
+      _trackPositions = _hikingProviderRef.trackPositions;
+      _distanceToSummit = _hikingProviderRef.distanceToSummit;
     });
 
     _updateMarkers();
     _updateTrackPolyline();
 
-    // 지도 중심 이동
     _mapController?.setCenter(
       LatLng(position.latitude, position.longitude),
     );
 
-    // 정상 도착 확인 (등산 중일 때만)
     if (!_isDescending) {
       _checkSummitArrival(position);
     } else {
-      // 하산 중 입구 근처 도착 감지
       _checkStartPointArrival(position);
     }
   }
@@ -1179,19 +1002,16 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   }
 
   void _startDescent() {
-    final pedometer = context.read<PedometerService>();
+    _hikingProviderRef.startDescent(_pedometerServiceRef);
     setState(() {
-      // 등산 데이터 스냅샷 저장
-      _ascentDistance = _totalDistance;
-      _ascentSeconds = _elapsedSeconds;
-      _ascentSteps = _hikingSteps;
-
-      // 하산 모드 전환
       _isDescending = true;
+      _ascentDistance = _hikingProviderRef.ascentDistance;
+      _ascentSeconds = _hikingProviderRef.ascentSeconds;
+      _ascentSteps = _hikingProviderRef.ascentSteps;
+      _descentStartSteps = _hikingProviderRef.descentStartSteps;
       _descentDistance = 0;
       _descentSeconds = 0;
       _descentSteps = 0;
-      _descentStartSteps = pedometer.todaySteps;
       _descentElevationGain = 0;
       _descentElevationLoss = 0;
       _descentCalories = 0;
@@ -1200,16 +1020,14 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
   }
 
   void _pauseHiking() {
-    setState(() {
-      _isPaused = true;
-    });
+    _hikingProviderRef.pauseHiking();
+    setState(() { _isPaused = true; });
     _mapService.stopTracking();
   }
 
   void _resumeHiking() {
-    setState(() {
-      _isPaused = false;
-    });
+    _hikingProviderRef.resumeHiking();
+    setState(() { _isPaused = false; });
     _mapService.startTracking(onPositionUpdate: _onPositionUpdate);
   }
 
@@ -1248,6 +1066,7 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
           presentBadge: false,
         ),
       ),
+      payload: 'hiking',
     );
   }
 
@@ -1261,14 +1080,10 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     if (_isCompleted) return;
     _isCompleted = true; // 즉시 설정하여 중복 호출 방지
 
-    _timer?.cancel();
-    _cancelHikingNotification(); // 상태바 알림 제거
-    await _clearHikingState(); // 저장된 임시 상태 삭제
     _mapService.stopTracking();
-    // Provider 상태도 리셋
-    if (mounted) {
-      context.read<HikingProvider>().resetState();
-    }
+    // Provider 타이머 중단 + 알림 제거 + 상태 리셋
+    _hikingProviderRef.completeHiking();
+    await _clearHikingState(); // 저장된 임시 상태 삭제
 
     // 저장 중 로딩 표시
     if (mounted) {
@@ -3102,8 +2917,9 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
     final defaultTimeUp = widget.oreum.timeUp;
     if (defaultTimeUp != null && defaultTimeUp > 0) {
       // 진행률에 따라 남은 시간 추정
-      final totalExpectedDistance = widget.oreum.distance?.toDouble() ?? 1000;
-      final progress = _totalDistance / totalExpectedDistance;
+      final rawDist = widget.oreum.distance ?? 0;
+      final totalExpectedDistance = rawDist > 0 ? rawDist : 1000.0;
+      final progress = (_totalDistance / totalExpectedDistance).clamp(0.0, 1.0);
       final remainingMinutes = (defaultTimeUp * (1 - progress)).round();
       if (remainingMinutes > 0) {
         return '약 ${remainingMinutes}분';
@@ -3821,27 +3637,36 @@ class _HikingScreenState extends State<HikingScreen> with WidgetsBindingObserver
                   ),
                 ),
                 const Divider(),
-                ...candidates.take(10).map((entry) {
-                  final oreum = entry.key;
-                  final dist = entry.value;
-                  final distStr = dist < 1000
-                      ? '${dist.toInt()}m'
-                      : '${(dist / 1000).toStringAsFixed(1)}km';
-                  return ListTile(
-                    leading: const Icon(Icons.add_location_alt, color: AppColors.primary),
-                    title: Text(oreum.name),
-                    subtitle: Text('$distStr ${oreum.difficulty ?? ''}'),
-                    trailing: const Icon(Icons.add_circle_outline, color: AppColors.primary),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _addOreumToMap(oreum);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('${oreum.name} 인증 원이 지도에 추가되었습니다')),
-                      );
-                    },
-                  );
-                }),
-                const SizedBox(height: 8),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ...candidates.take(10).map((entry) {
+                          final oreum = entry.key;
+                          final dist = entry.value;
+                          final distStr = dist < 1000
+                              ? '${dist.toInt()}m'
+                              : '${(dist / 1000).toStringAsFixed(1)}km';
+                          return ListTile(
+                            leading: const Icon(Icons.add_location_alt, color: AppColors.primary),
+                            title: Text(oreum.name),
+                            subtitle: Text('$distStr ${oreum.difficulty ?? ''}'),
+                            trailing: const Icon(Icons.add_circle_outline, color: AppColors.primary),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _addOreumToMap(oreum);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('${oreum.name} 인증 원이 지도에 추가되었습니다')),
+                              );
+                            },
+                          );
+                        }),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),

@@ -9,6 +9,7 @@ import '../../models/oreum_model.dart';
 import '../../providers/stamp_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/oreum_provider.dart';
+import '../../providers/hiking_provider.dart';
 import '../../services/community_service.dart';
 import '../community/community_screen.dart';
 import '../../models/post_model.dart';
@@ -17,6 +18,7 @@ import '../../services/map_service.dart';
 import '../../services/oreum_service.dart';
 import '../../services/stamp_service.dart';
 import '../../services/review_service.dart';
+import '../../widgets/hiking_mini_bar.dart';
 import '../hiking/hiking_screen.dart';
 import '../map/map_screen.dart';
 import 'oreum_error_report_screen.dart';
@@ -136,6 +138,7 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
     );
 
     if (pickedFiles.isEmpty) return;
+    if (!mounted) return;
 
     setState(() => _isUploadingImage = true);
 
@@ -253,7 +256,13 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: _buildBottomBar(context),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const HikingMiniBar(),
+          _buildBottomBar(context),
+        ],
+      ),
     );
   }
 
@@ -1306,10 +1315,62 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _navigateToHiking(),
-                  icon: const Icon(Icons.hiking),
-                  label: const Text('등반 시작'),
+                child: Builder(
+                  builder: (context) {
+                    final hiking = context.watch<HikingProvider>();
+                    final isHikingThis = hiking.isHiking && hiking.currentOreum?.id == oreum.id;
+                    final isHikingOther = hiking.isHiking && hiking.currentOreum?.id != oreum.id;
+                    return ElevatedButton.icon(
+                      onPressed: isHikingOther
+                          ? null
+                          : isHikingThis
+                              ? () async {
+                                  final confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      title: const Text('등산 중'),
+                                      content: const Text('현재 등산 중입니다.\n등산 화면으로 이동하시겠습니까?'),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(ctx, false),
+                                          child: const Text('취소'),
+                                        ),
+                                        ElevatedButton(
+                                          onPressed: () => Navigator.pop(ctx, true),
+                                          child: const Text('이동'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirm == true && context.mounted) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => HikingScreen(oreum: oreum),
+                                      ),
+                                    );
+                                  }
+                                }
+                              : _startHikingWithDistanceCheck,
+                      icon: Icon(isHikingOther
+                          ? Icons.block
+                          : isHikingThis
+                              ? Icons.play_circle
+                              : Icons.hiking),
+                      label: Text(isHikingOther
+                          ? '등반 불가 (등산 중)'
+                          : isHikingThis
+                              ? '등산 중 - 화면으로'
+                              : '등반 시작'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isHikingOther
+                            ? Colors.grey
+                            : isHikingThis
+                                ? Colors.green
+                                : AppColors.primary,
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -1321,6 +1382,45 @@ class _OreumDetailScreenState extends State<OreumDetailScreen> {
 
   // 등반 시작 시 입구 거리 체크
   Future<void> _startHikingWithDistanceCheck() async {
+    if (!mounted) return;
+    final hiking = context.read<HikingProvider>();
+
+    // 이미 등산 중인 경우 처리
+    if (hiking.isHiking) {
+      final isSameOreum = hiking.currentOreum?.id == oreum.id;
+      if (isSameOreum) {
+        // 같은 오름: 바로 등산 화면으로 이동
+        _navigateToHiking();
+        return;
+      } else {
+        // 다른 오름: 경고 다이얼로그
+        if (!mounted) return;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('등산 중입니다'),
+            content: Text(
+              '${hiking.currentOreum?.name ?? '현재 오름'} 등산이 진행 중입니다.\n\n새로운 등산을 시작하면 현재 기록이 사라집니다.\n계속하시겠습니까?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('취소'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('새로 시작'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        hiking.resetState();
+      }
+    }
+
     final mapService = MapService();
     final position = await mapService.getCurrentPosition();
 

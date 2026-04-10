@@ -63,6 +63,11 @@ class StampService {
       await _updateTotalSteps(userId, totalSteps);
     }
 
+    // stamp_count 업데이트 (새 스탬프일 때만 +1)
+    try {
+      await _client.rpc('increment_stamp_count', params: {'p_user_id': userId, 'p_oreum_id': oreumId});
+    } catch (_) {}
+
     // 뱃지 체크
     await _checkAndAwardBadges(userId);
 

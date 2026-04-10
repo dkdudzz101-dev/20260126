@@ -303,6 +303,13 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
+    // 플러그인 JS 내부의 글로벌 markers 배열을 먼저 비워야 함.
+    // addMarkerClusterer는 markers 배열 전체를 클러스터러에 넣기 때문에,
+    // 클리어 없이는 필터 적용 후에도 이전 마커들이 그대로 클러스터에 포함됨.
+    if (_mapController != null) {
+      _mapController!.clearMarker();
+    }
+
     // 컨트롤러로 직접 배지 오버레이 즉시 갱신 (didUpdateWidget 보다 빠름)
     if (_mapController != null) {
       final oldIds = _badgeOverlays.map((o) => o.customOverlayId).toList();
@@ -439,6 +446,7 @@ class _MapScreenState extends State<MapScreen> {
       {'key': 'scenic', 'name': '전망좋은', 'icon': Icons.landscape, 'color': Color(0xFF2196F3)},
       {'key': 'forest', 'name': '숲속힐링', 'icon': Icons.forest, 'color': Color(0xFF4CAF50)},
       {'key': 'family', 'name': '가족추천', 'icon': Icons.family_restroom, 'color': Color(0xFF9C27B0)},
+      {'key': 'pet', 'name': '강아지동반', 'icon': Icons.pets, 'color': Color(0xFF795548)},
     ];
 
     showModalBottomSheet(
@@ -979,6 +987,33 @@ class _MapScreenState extends State<MapScreen> {
 
       if (!mounted) return;
 
+      // 정상 인증 범위 원은 GeoJSON 유무와 관계없이 항상 표시
+      if (oreum.summitLat != null && oreum.summitLng != null) {
+        _summitRangeCircle = {
+          Circle(
+            circleId: 'summit_range_${oreum.id}',
+            center: LatLng(oreum.summitLat!, oreum.summitLng!),
+            radius: 100,
+            strokeWidth: 3,
+            strokeColor: Colors.green,
+            strokeOpacity: 0.8,
+            strokeStyle: StrokeStyle.dash,
+            fillColor: Colors.green,
+            fillOpacity: 0.15,
+          ),
+        };
+        _summitRangeLabel = {
+          CustomOverlay(
+            customOverlayId: 'summit_label_${oreum.id}',
+            latLng: LatLng(oreum.summitLat!, oreum.summitLng!),
+            content: '<div style="background:white;padding:4px 8px;border-radius:12px;border:2px solid #4CAF50;box-shadow:0 2px 4px rgba(0,0,0,0.2);"><span style="font-size:11px;color:#2E7D32;font-weight:bold;">정상인증 가능영역</span></div>',
+            xAnchor: 0.5,
+            yAnchor: 0.5,
+            zIndex: 10,
+          ),
+        };
+      }
+
       if (trailData != null && trailData.trailPoints.isNotEmpty) {
         // '기타' 제외한 시설물만 필터링
         final facilitiesToShow = trailData.facilities
@@ -1012,33 +1047,6 @@ class _MapScreenState extends State<MapScreen> {
           );
         }
 
-        // 정상 인증 범위 원 생성 (100m 반경)
-        if (oreum.summitLat != null && oreum.summitLng != null) {
-          _summitRangeCircle = {
-            Circle(
-              circleId: 'summit_range_${oreum.id}',
-              center: LatLng(oreum.summitLat!, oreum.summitLng!),
-              radius: 100,
-              strokeWidth: 3,
-              strokeColor: Colors.green,
-              strokeOpacity: 0.8,
-              strokeStyle: StrokeStyle.dash,
-              fillColor: Colors.green,
-              fillOpacity: 0.15,
-            ),
-          };
-          _summitRangeLabel = {
-            CustomOverlay(
-              customOverlayId: 'summit_label_${oreum.id}',
-              latLng: LatLng(oreum.summitLat!, oreum.summitLng!),
-              content: '<div style="background:white;padding:4px 8px;border-radius:12px;border:2px solid #4CAF50;box-shadow:0 2px 4px rgba(0,0,0,0.2);"><span style="font-size:11px;color:#2E7D32;font-weight:bold;">정상인증 가능영역</span></div>',
-              xAnchor: 0.5,
-              yAnchor: 0.5,
-              zIndex: 10,
-            ),
-          };
-        }
-
         setState(() {
           _showTrail = true;
           _trailPolylines = polylines;
@@ -1052,11 +1060,18 @@ class _MapScreenState extends State<MapScreen> {
         // fitBounds로 등산로 전체가 보이도록 확대
         _fitBoundsToTrail(trailData.trailPoints);
       } else {
+        // GeoJSON 없어도 정상원은 표시 (지도 중심을 정상으로 이동)
         setState(() {
+          _showTrail = true;
+          _trailPolylines = {};
+          _currentFacilities = [];
           _isLoadingTrail = false;
         });
+        if (oreum.summitLat != null && oreum.summitLng != null) {
+          _mapController?.setCenter(LatLng(oreum.summitLat!, oreum.summitLng!));
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('등산로 데이터가 없습니다')),
+          const SnackBar(content: Text('등산로 데이터가 없습니다 (정상 위치만 표시)')),
         );
       }
     } catch (e) {
@@ -1376,12 +1391,12 @@ class _MapScreenState extends State<MapScreen> {
               },
             ),
           ),
+          // 바텀 시트 (오름 정보) — 사이드 버튼보다 먼저: z 순서상 아래에 위치해야 버튼 터치가 정상 동작
+          _buildBottomSheet(),
           // 상단 바
           _buildTopBar(),
-          // 우측 버튼들 (내 위치 포함)
+          // 우측 버튼들 (내 위치 포함) — 바텀 시트보다 위에 위치해야 터치 이벤트 수신
           _buildSideButtons(),
-          // 바텀 시트 (오름 정보)
-          _buildBottomSheet(),
           // 시설물 목록 패널 (등산로 보기 시)
           if (_showTrail && _currentFacilities.isNotEmpty) _buildFacilityListPanel(),
         ],

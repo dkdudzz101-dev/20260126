@@ -149,11 +149,6 @@ class MapService {
         distanceFilter: 5,
         forceLocationManager: false,
         intervalDuration: const Duration(seconds: 3),
-        foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationText: "등산 경로를 기록하고 있습니다",
-          notificationTitle: "제주오름",
-          enableWakeLock: true,
-        ),
       );
     } else if (Platform.isIOS) {
       locationSettings = AppleSettings(
